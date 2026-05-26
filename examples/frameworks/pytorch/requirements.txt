@@ -8,4 +8,4 @@ torch>=1.1.0
 torchvision>=0.3.0
 tqdm
 protobuf==3.20.* ; python_version <= '3.7'
-protobuf>=4.25.8 ; python_version > '3.7'
+protobuf>=7.35.0 ; python_version > '3.7'
