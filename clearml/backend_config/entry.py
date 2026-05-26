@@ -1,23 +1,14 @@
-import abc
+from abc import ABC, abstractmethod
 from typing import Optional, Any, Tuple, Callable, Dict
 
-import six
-
 from .converters import any_to_bool
-
-try:
-    from typing import Text
-except ImportError:
-    # windows conda-less hack
-    Text = object
 
 NotSet = object()
 
 Converter = Callable[[Any], Any]
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Entry(object):
+class Entry(ABC):
     """
     Configuration entry definition
     """
@@ -26,10 +17,10 @@ class Entry(object):
     def default_conversions(cls) -> Dict[Any, Converter]:
         return {
             bool: any_to_bool,
-            six.text_type: lambda s: six.text_type(s).strip(),
+            str: lambda s: str(s).strip(),
         }
 
-    def __init__(self, key: Text, *more_keys: Text, **kwargs: Any) -> None:
+    def __init__(self, key: str, *more_keys: str, **kwargs: Any) -> None:
         """
         :param key: Entry's key (at least one).
         :param more_keys: More alternate keys for this entry.
@@ -42,7 +33,7 @@ class Entry(object):
         :param help: Help text describing this entry
         """
         self.keys = (key,) + more_keys
-        self.type = kwargs.pop("type", six.text_type)
+        self.type = kwargs.pop("type", str)
         self.converter = kwargs.pop("converter", None)
         self.default = kwargs.pop("default", None)
         self.help = kwargs.pop("help", None)
@@ -51,7 +42,7 @@ class Entry(object):
         return str(self.key)
 
     @property
-    def key(self) -> Text:
+    def key(self) -> str:
         return self.keys[0]
 
     def convert(self, value: Any, converter: Converter = None) -> Optional[Any]:
@@ -60,7 +51,7 @@ class Entry(object):
             converter = self.default_conversions().get(self.type, self.type)
         return converter(value)
 
-    def get_pair(self, default: Any = NotSet, converter: Converter = None) -> Optional[Tuple[Text, Any]]:
+    def get_pair(self, default: Any = NotSet, converter: Converter = None) -> Optional[Tuple[str, Any]]:
         for key in self.keys:
             value = self._get(key)
             if value is NotSet:
@@ -78,20 +69,20 @@ class Entry(object):
     def get(self, default: Any = NotSet, converter: Converter = None) -> Optional[Any]:
         return self.get_pair(default=default, converter=converter)[1]
 
-    def set(self, value: Any) -> ():
+    def set(self, value: Any) -> None:
         # key, _ = self.get_pair(default=None, converter=None)
         for k in self.keys:
             self._set(k, str(value))
 
-    def _set(self, key: Text, value: Text) -> None:
+    def _set(self, key: str, value: str) -> None:
         pass
 
-    @abc.abstractmethod
-    def _get(self, key: Text) -> Any:
+    @abstractmethod
+    def _get(self, key: str) -> Any:
         pass
 
-    @abc.abstractmethod
-    def error(self, message: Text) -> None:
+    @abstractmethod
+    def error(self, message: str) -> None:
         pass
 
     def exists(self) -> bool:

@@ -1,4 +1,4 @@
-import abc
+from abc import ABC, abstractmethod
 import logging
 import warnings
 from copy import copy
@@ -7,22 +7,24 @@ from os import getenv
 from typing import Tuple, Dict, List, Union, Optional, Any
 
 import furl
-import six
 from attr import attrib, attrs
 
 
 def _none_to_empty_string(maybe_string: str) -> str:
+    """Returns an empty string for any falsy value"""
     return maybe_string if maybe_string is not None else ""
 
 
 def _url_stripper(bucket: str) -> str:
+    """Strips `'`, `"` from the entire URL string and `/` from the end of the string"""
     bucket = _none_to_empty_string(bucket)
     bucket = bucket.strip("\"'").rstrip("/")
     return bucket
 
 
 @attrs
-class S3BucketConfig(object):
+class S3BucketConfig:
+    """Configuration for an S3 bucket"""
     bucket = attrib(type=str, converter=_url_stripper, default="")
     subdir = attrib(type=str, converter=_url_stripper, default="")
     host = attrib(type=str, converter=_none_to_empty_string, default="")
@@ -90,8 +92,7 @@ class S3BucketConfig(object):
 BucketConfig = S3BucketConfig
 
 
-@six.add_metaclass(abc.ABCMeta)
-class BaseBucketConfigurations(object):
+class BaseBucketConfigurations(ABC):
     def __init__(self, buckets: Optional[List[Any]] = None, *_: Any, **__: Any) -> None:
         self._buckets = buckets or []
         self._prefixes = None
@@ -102,7 +103,7 @@ class BaseBucketConfigurations(object):
         prefixes = ((config, self._get_prefix_from_bucket_config(config)) for config in self._buckets)
         self._prefixes = sorted(prefixes, key=itemgetter(1), reverse=True)
 
-    @abc.abstractmethod
+    @abstractmethod
     def _get_prefix_from_bucket_config(self, config: "GSBucketConfig") -> str:
         pass
 
@@ -267,7 +268,7 @@ BucketConfigurations = S3BucketConfigurations
 
 
 @attrs
-class GSBucketConfig(object):
+class GSBucketConfig:
     bucket = attrib(type=str)
     subdir = attrib(type=str, converter=_url_stripper, default="")
     project = attrib(type=str, default=None)
@@ -376,7 +377,7 @@ class GSBucketConfigurations(BaseBucketConfigurations):
 
 
 @attrs
-class AzureContainerConfig(object):
+class AzureContainerConfig:
     account_name = attrib(type=str)
     account_key = attrib(type=str)
     container_name = attrib(type=str, default=None)
@@ -392,7 +393,7 @@ class AzureContainerConfig(object):
         return self.account_name and self.container_name
 
 
-class AzureContainerConfigurations(object):
+class AzureContainerConfigurations:
     def __init__(
         self,
         container_configs: List[AzureContainerConfig] = None,

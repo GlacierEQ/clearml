@@ -1,4 +1,4 @@
-import abc
+from abc import ABC, abstractmethod
 import hashlib
 import time
 from functools import reduce
@@ -16,13 +16,12 @@ from six.moves.urllib.parse import urlparse, urlunparse
 from ...backend_api.services import events
 from ...config import deferred_config
 from ...debugging.log import LoggerRoot
-from ...storage.util import quote_url
+from ...storage.url import quote_url
 from ...utilities.attrs import attrs
 from ...utilities.process.mp import SingletonLock
 
 
-@six.add_metaclass(abc.ABCMeta)
-class MetricsEventAdapter(object):
+class MetricsEventAdapter(ABC):
     """
     Adapter providing all the base attributes required by a metrics event and defining an interface used by the
     metrics manager when batching and writing events.
@@ -37,7 +36,7 @@ class MetricsEventAdapter(object):
     _report_inf_warning_iteration = float("inf")
 
     @attrs(cmp=False, slots=True)
-    class FileEntry(object):
+    class FileEntry:
         """File entry used to report on file data that needs to be uploaded prior to sending the event"""
 
         event = attr.attrib()
@@ -102,7 +101,7 @@ class MetricsEventAdapter(object):
         _ = self.get_api_event()
         self.upload_exception = None
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_api_event(self) -> None:
         """Get an API event instance"""
         pass

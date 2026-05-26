@@ -36,6 +36,7 @@ _nameToLevel = {
 
 
 def resolve_logging_level(level: Union[str, int]) -> Optional[int]:
+    """Resolve an integer or string log level into python logging level"""
     # noinspection PyBroadException
     try:
         level = int(level)
@@ -54,8 +55,8 @@ class PickledLogger(logging.getLoggerClass()):
 
     @staticmethod
     def wrapper(a_instance: "PickledLogger", func: callable, **kwargs: Any) -> "PickledLogger":
-        # if python 3.7 and above Loggers are pickle-able
-        if sys.version_info.major >= 3 and sys.version_info.minor >= 7:
+        # if python version is >= 3.7, Loggers are pickle-able
+        if (sys.version_info.major, sys.version_info.minor) >= (3, 7):
             return a_instance
 
         safe_logger = PickledLogger(name=kwargs.get("name"))
@@ -95,7 +96,7 @@ class _LevelRangeFilter(logging.Filter):
         return self.min_level <= record.levelno <= self.max_level
 
 
-class LoggerRoot(object):
+class LoggerRoot:
     __base_logger = None
 
     @classmethod
@@ -269,7 +270,7 @@ def get_null_logger(name: Optional[str] = None) -> PickledLogger:
     return PickledLogger.wrapper(log, func=get_null_logger, name=name)
 
 
-class TqdmLog(object):
+class TqdmLog:
     """Tqdm (progressbar) wrapped logging class"""
 
     class _TqdmIO(BytesIO):

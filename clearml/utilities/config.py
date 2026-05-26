@@ -4,15 +4,14 @@ import json
 from typing import Union, Any
 
 import pyparsing
-import six
 
 from .dicts import hocon_quote_key, hocon_unquote_key
 from .pyhocon import ConfigFactory, HOCONConverter
-from ..storage.util import parse_size
+from ..storage.size import parse_size
 
 
 def parse_human_size(value: Any) -> Any:
-    if isinstance(value, six.string_types):
+    if isinstance(value, str):
         return parse_size(value)
     return value
 
@@ -25,7 +24,7 @@ def get_percentage(config: dict, key: str, required: bool = True, default: float
         if value is None:
             return
     try:
-        if isinstance(value, six.string_types):
+        if isinstance(value, str):
             value = value.strip()
             if value.endswith("%"):
                 # "50%" => 0.5
@@ -55,7 +54,7 @@ def get_human_size_default(config: dict, key: str, default: Any = None) -> Any:
 
 def config_dict_to_text(config: Union[str, dict, list]) -> str:
     # if already string return as is
-    if isinstance(config, six.string_types):
+    if isinstance(config, str):
         return config
     if not isinstance(config, (dict, list)):
         raise ValueError("Configuration only supports dictionary/list objects")
@@ -95,27 +94,28 @@ def config_dict_to_text(config: Union[str, dict, list]) -> str:
     return text
 
 
-def text_to_config_dict(text: six.string_types) -> dict:
-    if not isinstance(text, six.string_types):
+def text_to_config_dict(text: str) -> dict:
+    if not isinstance(text, str):
         raise ValueError("Configuration parsing only supports string")
     # noinspection PyBroadException
     try:
         return hocon_unquote_key(ConfigFactory.parse_string(text))
     except pyparsing.ParseBaseException as ex:
         pos = "at char {}, line:{}, col:{}".format(ex.loc, ex.lineno, ex.column)
-        six.raise_from(
-            ValueError("Could not parse configuration text ({}):\n{}".format(pos, text)),
-            None,
-        )
+        raise ValueError(
+            "Could not parse configuration text ({}):\n{}".format(pos, text),
+        ) from None
     except Exception:
-        six.raise_from(ValueError("Could not parse configuration text:\n{}".format(text)), None)
+        raise ValueError(
+            "Could not parse configuration text:\n{}".format(text)
+        ) from None
 
 
 def verify_basic_value(value: Any) -> bool:
     # return True if value of of basic type (json serializable)
     if not isinstance(
         value,
-        six.string_types + six.integer_types + (six.text_type, float, list, tuple, dict, type(None)),
+        (str, int, float, list, tuple, dict, type(None)),
     ):
         return False
     try:

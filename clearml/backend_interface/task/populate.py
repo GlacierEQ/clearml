@@ -14,9 +14,10 @@ from six.moves.urllib.parse import urlparse
 from .args import _Arguments
 from .repo import ScriptInfo
 from ...task import Task
+from ...config import deferred_config, DEVELOPMENT_DEFAULT_SHELL_BINARY_PATH
 
 
-class CreateAndPopulate(object):
+class CreateAndPopulate:
     _VCS_SSH_REGEX = (
         "^"
         "(?:(?P<user>{regular}*?)@)?"
@@ -24,6 +25,14 @@ class CreateAndPopulate(object):
         ":"
         "(?P<path>{regular}.*)?"
         "$".format(regular=r"[^/@:#]")
+    )
+
+    _DEFAULT_SHELL_BINARY_PATH = (
+        DEVELOPMENT_DEFAULT_SHELL_BINARY_PATH.get()
+        or deferred_config(
+            "development.default_shell_binary",
+            "/bin/bash",
+        )
     )
 
     def __init__(
@@ -311,7 +320,7 @@ class CreateAndPopulate(object):
             task_state["script"]["working_dir"] = repo_info.script["working_dir"]
             task_state["script"]["entry_point"] = repo_info.script["entry_point"]
             task_state["script"]["binary"] = self.binary or (
-                "/bin/bash"
+                str(self._DEFAULT_SHELL_BINARY_PATH)
                 if (
                     (repo_info.script["entry_point"] or "").lower().strip().endswith(".sh")
                     and not (repo_info.script["entry_point"] or "").lower().strip().startswith("-m ")
@@ -397,7 +406,7 @@ class CreateAndPopulate(object):
                     force_single_script=True,
                 )
                 task_state["script"]["binary"] = self.binary or (
-                    "/bin/bash"
+                    str(self._DEFAULT_SHELL_BINARY_PATH)
                     if (
                         (repo_info.script["entry_point"] or "").lower().strip().endswith(".sh")
                         and not (repo_info.script["entry_point"] or "").lower().strip().startswith("-m ")
@@ -416,13 +425,21 @@ class CreateAndPopulate(object):
                     and entry_point.lower().strip().endswith(".sh")
                     and not entry_point.lower().strip().startswith("-m")
                 ):
-                    task_state["script"]["binary"] = "/bin/bash"
+                    task_state["script"]["binary"] = str(self._DEFAULT_SHELL_BINARY_PATH)
         else:
             # standalone task
             task_state["script"]["entry_point"] = (
                 self.script if self.script else ("-m {}".format(self.module) if self.module else "")
             )
             task_state["script"]["working_dir"] = "."
+            if self.binary:
+                task_state["script"]["binary"] = self.binary
+            elif (
+                task_state["script"]["entry_point"]
+                and task_state["script"]["entry_point"].lower().strip().endswith(".sh")
+                and not task_state["script"]["entry_point"].lower().strip().startswith("-m")
+            ):
+                task_state["script"]["binary"] = str(self._DEFAULT_SHELL_BINARY_PATH)
         # update requirements
         reqs = []
         if self.requirements_file:
@@ -596,7 +613,7 @@ class CreateAndPopulate(object):
     def update_task_args(
         self,
         args: Optional[Union[Sequence[str], Sequence[Tuple[str, str]]]] = None,
-    ) -> ():
+    ) -> None:
         """
         Update the newly created Task argparse Arguments
         If called before Task created, used for argument verification
@@ -687,7 +704,7 @@ class CreateAndPopulate(object):
         return found_index if found_index < 0 else lines[found_index][0]
 
 
-class CreateFromFunction(object):
+class CreateFromFunction:
     kwargs_section = "kwargs"
     return_section = "return"
     input_artifact_section = "kwargs_artifacts"
@@ -858,6 +875,7 @@ if __name__ == '__main__':
                 def serialize(obj):
                     import dill
                     return dill.dumps(obj)
+
         :param artifact_deserialization_function: A deserialization function that takes one parameter of type `bytes`,
             which represents the serialized object. This function should return the deserialized object.
             All parameter/return artifacts fetched by the pipeline will be deserialized using this function.
@@ -868,6 +886,7 @@ if __name__ == '__main__':
                 def deserialize(bytes_):
                     import dill
                     return dill.loads(bytes_)
+
         :param _sanitize_function: Sanitization function for the function string.
         :param _sanitize_helper_functions: Sanitization function for the helper function string.
         :param skip_global_imports: If True, the global imports will not be fetched from the function's file, otherwise

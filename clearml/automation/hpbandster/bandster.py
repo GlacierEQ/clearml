@@ -114,7 +114,7 @@ class _TrainsBandsterWorker(Worker):
             # can be used for any user-defined information - also mandatory
             "info": self._current_job.task_id(),
         }
-        print("TrainsBandsterWorker result {}, iteration {}".format(result, iteration_value[0]))
+        print(f"TrainsBandsterWorker result {result}, iteration {iteration_value[0]}")
         # noinspection PyProtectedMember
         self.optimizer._current_jobs.remove(self._current_job)
         return result
@@ -233,7 +233,7 @@ class OptimizerBOHB(SearchStrategy, RandomSeed):
         random_fraction: Optional[float] = 1 / 3.0,
         bandwidth_factor: Optional[float] = 3,
         min_bandwidth: Optional[float] = 1e-3,
-    ) -> ():
+    ) -> None:
         """
         Defaults copied from BOHB constructor, see details in BOHB.__init__
 
@@ -296,7 +296,7 @@ class OptimizerBOHB(SearchStrategy, RandomSeed):
         self._bohb_kwargs["bandwidth_factor"] = bandwidth_factor
         self._bohb_kwargs["min_bandwidth"] = min_bandwidth
 
-    def start(self) -> ():
+    def start(self) -> None:
         """
         Start the Optimizer controller function loop()
         If the calling process is stopped, the controller will stop as well.
@@ -306,7 +306,7 @@ class OptimizerBOHB(SearchStrategy, RandomSeed):
 
         """
         # Step 1: Start a NameServer
-        fake_run_id = "OptimizerBOHB_{}".format(time())
+        fake_run_id = f"OptimizerBOHB_{time()}"
         # default port is 9090, we must have one, this is how BOHB workers communicate (even locally)
         self._namespace = hpns.NameServer(run_id=fake_run_id, host="127.0.0.1", port=self._nameserver_port)
         self._namespace.start()
@@ -351,7 +351,7 @@ class OptimizerBOHB(SearchStrategy, RandomSeed):
         # Step 4: if we get here, Shutdown
         self.stop()
 
-    def stop(self) -> ():
+    def stop(self) -> None:
         """
         Stop the current running optimization loop,
         Called from a different thread than the :meth:`start`.
@@ -370,19 +370,16 @@ class OptimizerBOHB(SearchStrategy, RandomSeed):
         all_runs = self._res.get_all_runs()
 
         # Step 6: Print Analysis
+        unique_configurations_count = len(id2config.keys())
+        executed_runs_count = len(self._res.get_all_runs())
+        budget = sum([r.budget for r in all_runs]) / self._bohb_kwargs.get("max_budget", 1.0)
+        run_duration = all_runs[-1].time_stamps["finished"] - all_runs[0].time_stamps["started"]
+
         print("Best found configuration:", id2config[incumbent]["config"])
-        print("A total of {} unique configurations where sampled.".format(len(id2config.keys())))
-        print("A total of {} runs where executed.".format(len(self._res.get_all_runs())))
-        print(
-            "Total budget corresponds to {:.1f} full function evaluations.".format(
-                sum([r.budget for r in all_runs]) / self._bohb_kwargs.get("max_budget", 1.0)
-            )
-        )
-        print(
-            "The run took {:.1f} seconds to complete.".format(
-                all_runs[-1].time_stamps["finished"] - all_runs[0].time_stamps["started"]
-            )
-        )
+        print(f"A total of {unique_configurations_count} unique configurations where sampled.")
+        print(f"A total of {executed_runs_count} runs where executed.")
+        print(f"Total budget corresponds to {budget:.1f} full function evaluations.")
+        print(f"The run took {run_duration:.1f} seconds to complete.")
 
     def _convert_hyper_parameters_to_cs(self) -> CS.ConfigurationSpace:
         cs = CS.ConfigurationSpace(seed=self._seed)
@@ -406,7 +403,7 @@ class OptimizerBOHB(SearchStrategy, RandomSeed):
             elif isinstance(p, DiscreteParameterRange):
                 hp = CSH.CategoricalHyperparameter(p.name, choices=p.values)
             else:
-                raise ValueError("HyperParameter type {} not supported yet with OptimizerBOHB".format(type(p)))
+                raise ValueError(f"HyperParameter type {type(p)} not supported yet with OptimizerBOHB")
             cs.add_hyperparameter(hp)
 
         return cs

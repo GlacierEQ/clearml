@@ -1,6 +1,5 @@
 import attr
 from attr.validators import and_, instance_of, optional
-from six import string_types
 from typing import Any
 
 # noinspection PyTypeChecker
@@ -15,7 +14,7 @@ def sequence_of(types: type) -> attr.validators._AndValidator:
 
 
 @attr.s
-class Action(object):
+class Action:
     name = attr.ib()
     version = attr.ib()
     service = attr.ib()
@@ -24,12 +23,12 @@ class Action(object):
     log_data = attr.ib(validator=instance_of(bool), default=True)
     log_result_data = attr.ib(validator=instance_of(bool), default=True)
     internal = attr.ib(default=False)
-    allow_roles = attr.ib(default=None, validator=optional(sequence_of(string_types)))
+    allow_roles = attr.ib(default=None, validator=optional(sequence_of(str)))
     request = attr.ib(validator=optional(instance_of(dict)), default=None)
     batch_request = attr.ib(validator=optional(instance_of(dict)), default=None)
     response = attr.ib(validator=optional(instance_of(dict)), default=None)
     method = attr.ib(default=None)
     description = attr.ib(
         default=None,
-        validator=optional(instance_of(string_types)),
+        validator=optional(instance_of(str)),
     )

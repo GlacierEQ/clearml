@@ -1,11 +1,10 @@
-import abc
+from abc import ABC
 import logging
 import os
 from subprocess import call, CalledProcessError
 from typing import Any
 
 import attr
-import six
 from pathlib2 import Path
 
 from ....config.defs import (
@@ -26,7 +25,7 @@ class DetectionError(Exception):
 
 
 @attr.s
-class Result(object):
+class Result:
     """ " Repository information as queried by a detector"""
 
     url = attr.ib(default="")
@@ -41,8 +40,7 @@ class Result(object):
         return not any(attr.asdict(self).values())
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Detector(object):
+class Detector(ABC):
     """Base class for repository detection"""
 
     """
@@ -58,7 +56,7 @@ class Detector(object):
         return get_logger("Repository Detection")
 
     @attr.s
-    class Commands(object):
+    class Commands:
         """ " Repository information as queried by a detector"""
 
         url = attr.ib(default=None, type=list)
@@ -251,7 +249,7 @@ class GitDetector(Detector):
             commit=["git", "rev-parse", "HEAD"],
             root=["git", "rev-parse", "--show-toplevel"],
             status=["git", "status", "-s"],
-            diff=["git", "diff", "--submodule=diff", "HEAD"],
+            diff=["git", "diff", "--submodule=diff", "--default-prefix", "HEAD"],
             modified=["git", "ls-files", "-m"],
             branch_fallback=["git", "rev-parse", "--abbrev-ref", "HEAD"],
             diff_fallback=["git", "diff", "HEAD"],

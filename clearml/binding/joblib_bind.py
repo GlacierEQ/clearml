@@ -4,7 +4,6 @@ from functools import partial
 from io import IOBase
 from typing import Callable, Union, IO, Any
 
-import six
 from pathlib2 import Path
 
 from .import_bind import PostImportHookPatching
@@ -18,7 +17,7 @@ from ..utilities.lowlevel.file_access import (
 )
 
 
-class PatchedJoblib(object):
+class PatchedJoblib:
     _patched_joblib = False
     _patched_sk_joblib = False
     _current_task = None
@@ -109,15 +108,15 @@ class PatchedJoblib(object):
         if not PatchedJoblib._current_task:
             return ret
 
-        fname = f if isinstance(f, six.string_types) else None
-        fileobj = ret if isinstance(f, six.string_types) else f
+        fname = f if isinstance(f, str) else None
+        fileobj = ret if isinstance(f, str) else f
 
         if fileobj and hasattr(fileobj, "close"):
 
             def callback(*_: Any) -> None:
                 PatchedJoblib._register_dump(obj, fname or fileobj)
 
-            if isinstance(fname, six.string_types) or hasattr(fileobj, "name"):
+            if isinstance(fname, str) or hasattr(fileobj, "name"):
                 buffer_writer_close_cb(fileobj, callback)
         else:
             PatchedJoblib._register_dump(obj, f)
@@ -130,15 +129,15 @@ class PatchedJoblib(object):
         if not PatchedJoblib._current_task:
             return ret
 
-        fname = f if isinstance(f, six.string_types) else None
-        fileobj = ret if isinstance(f, six.string_types) else f
+        fname = f if isinstance(f, str) else None
+        fileobj = ret if isinstance(f, str) else f
 
         if fileobj and hasattr(fileobj, "close"):
 
             def callback(*_: Any) -> None:
                 PatchedJoblib._register_dump(obj, fname or fileobj)
 
-            if isinstance(fname, six.string_types) or hasattr(fileobj, "name"):
+            if isinstance(fname, str) or hasattr(fileobj, "name"):
                 buffer_writer_close_cb(fileobj, callback)
         else:
             PatchedJoblib._register_dump(obj, f)
@@ -215,8 +214,7 @@ class PatchedJoblib(object):
             LoggerRoot.get_base_logger().debug(
                 "Can't get model framework {}, model framework will be: {} ".format(object_orig_module, framework)
             )
-        finally:
-            return framework
+        return framework
 
     @staticmethod
     def _cached_call_recursion_guard(original_fn: Callable, *args: Any, **kwargs: Any) -> Any:

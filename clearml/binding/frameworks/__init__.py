@@ -7,7 +7,6 @@ from random import randint
 from tempfile import mkstemp
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Union, Any
 
-import six
 from pathlib2 import Path
 
 from ...backend_interface.model import Model
@@ -25,7 +24,7 @@ _recursion_guard = {}
 def _patched_call(original_fn: Callable, patched_fn: Callable) -> Callable:
     def _inner_patch(*args: Any, **kwargs: Any) -> Any:
         # noinspection PyProtectedMember,PyUnresolvedReferences
-        ident = threading._get_ident() if six.PY2 else threading.get_ident()
+        ident = threading.get_ident()
         if ident in _recursion_guard:
             return original_fn(*args, **kwargs)
         _recursion_guard[ident] = 1
@@ -51,12 +50,12 @@ def _patched_call_no_recursion_guard(original_fn: Callable, patched_fn: Callable
     return _inner_patch
 
 
-class _Empty(object):
+class _Empty:
     def __init__(self) -> None:
         self.trains_in_model = None
 
 
-class WeightsFileHandler(object):
+class WeightsFileHandler:
     # _model_out_store_lookup = {}
     # _model_in_store_lookup = {}
     _model_store_lookup_lock = threading.Lock()
@@ -74,7 +73,7 @@ class WeightsFileHandler(object):
         save = "save"
         load = "load"
 
-    class ModelInfo(object):
+    class ModelInfo:
         def __init__(
             self,
             model: Optional[Model],

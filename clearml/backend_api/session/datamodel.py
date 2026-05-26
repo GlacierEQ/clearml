@@ -8,8 +8,6 @@ from typing import Callable, Dict, Optional, Collection, Any
 import jsonschema
 from enum import Enum
 
-import six
-
 
 def format_date(obj: datetime) -> str:
     if isinstance(obj, datetime):
@@ -48,7 +46,7 @@ except ImportError:
     pass
 
 
-class DataModel(object):
+class DataModel:
     """Data Model"""
 
     _schema = None
@@ -95,7 +93,10 @@ class DataModel(object):
             jsonschema.validate(
                 self.to_dict(),
                 schema or self._schema,
-                types=dict(array=(list, tuple), integer=six.integer_types),
+                types={
+                    "array": (list, tuple),
+                    "integer": (int,)
+                },
             )
         else:
             jsonschema.validate(
@@ -154,7 +155,7 @@ class UnusedKwargsWarning(UserWarning):
     pass
 
 
-class NonStrictDataModelMixin(object):
+class NonStrictDataModelMixin:
     """
     NonStrictDataModelMixin
 

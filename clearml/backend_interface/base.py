@@ -1,9 +1,8 @@
-import abc
+from abc import ABC, abstractmethod
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import requests.exceptions
-import six
 import jsonschema
 
 from ..backend_api import Session, CallResult
@@ -64,7 +63,7 @@ class InterfaceBase(SessionInterface):
         raise_on_errors: bool = True,
         log: logging.Logger = None,
         async_enable: bool = False,
-    ) -> CallResult:
+    ) -> Optional[CallResult]:
         """Convenience send() method providing a standardized error reporting"""
         if cls._offline_mode:
             return None
@@ -85,7 +84,10 @@ class InterfaceBase(SessionInterface):
                         ", ".join("%s=%s" % p for p in req.to_dict().items()),
                     )
                 if log:
-                    log.error(error_msg)
+                    log.error(
+                        error_msg,
+                        exc_info=log.isEnabledFor(logging.DEBUG),
+                    )
 
             except requests.exceptions.BaseHTTPError as e:
                 res = None
@@ -109,6 +111,7 @@ class InterfaceBase(SessionInterface):
                         "Field %s contains illegal schema: %s",
                         ".".join(e.path),
                         str(e.message),
+                        exc_info=log.isEnabledFor(logging.DEBUG),
                     )
                 if raise_on_errors:
                     raise ValidationError("Field %s contains illegal schema: %s" % (".".join(e.path), e.message))
@@ -136,7 +139,7 @@ class InterfaceBase(SessionInterface):
         ignore_errors: bool = False,
         raise_on_errors: bool = True,
         async_enable: bool = False,
-    ) -> CallResult:
+    ) -> Optional[CallResult]:
         return self._send(
             session=self.session,
             req=req,
@@ -175,8 +178,7 @@ class InterfaceBase(SessionInterface):
         return self._get_default_session()
 
 
-@six.add_metaclass(abc.ABCMeta)
-class IdObjectBase(InterfaceBase):
+class IdObjectBase(InterfaceBase, ABC):
     def __init__(self, id: str, session: Session = None, log: logging.Logger = None, **kwargs: Any) -> None:
         super(IdObjectBase, self).__init__(session, log, **kwargs)
         self._data = None
@@ -200,7 +202,7 @@ class IdObjectBase(InterfaceBase):
             self.reload()
         return self._data
 
-    @abc.abstractmethod
+    @abstractmethod
     def _reload(self) -> None:
         pass
 
@@ -210,9 +212,11 @@ class IdObjectBase(InterfaceBase):
         # noinspection PyBroadException
         try:
             self._data = self._reload()
-        except Exception as ex:
-            self.log.error("Failed reloading {} {}".format(type(self).__name__.lower(), self.id))
-            self.log.debug("Failed reloading {} {}: {}".format(type(self).__name__.lower(), self.id, ex))
+        except Exception:
+            self.log.error(
+                f"Failed reloading {type(self).__name__.lower()} {self.id}",
+                exc_info=self.log.isEnabledFor(logging.DEBUG),
+            )
 
     @classmethod
     def normalize_id(cls, id: str) -> str:

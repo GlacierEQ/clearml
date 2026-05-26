@@ -16,19 +16,19 @@ from pathlib2 import Path
 from ..backend_api import Session
 from ..backend_api.services import tasks as tasks_service
 from ..backend_interface.util import get_or_create_project, exact_match_regex
-from ..storage.util import hash_dict
+from ..storage.hashing import hash_dict
 from ..task import Task
 
 logger = getLogger("clearml.automation.job")
 
 
-class BaseJob(object):
+class BaseJob:
     _job_hash_description = "job_hash={}"
     _job_hash_property = "pipeline_job_hash"
     _hashing_callback = None
     _last_batch_status_update_ts = 0
 
-    def __init__(self) -> ():
+    def __init__(self) -> None:
         """
         Base Job is an abstract CLearML Job
         """
@@ -69,7 +69,7 @@ class BaseJob(object):
     def get_metric_req_params(title: str, series: str) -> Tuple[List[str], str, str, List[str]]:
         title = hashlib.md5(str(title).encode("utf-8")).hexdigest()
         series = hashlib.md5(str(series).encode("utf-8")).hexdigest()
-        metric = "last_metrics.{}.{}.".format(title, series)
+        metric = f"last_metrics.{title}.{series}."
         values = ["min_value", "max_value", "value"]
         metrics = [metric + v for v in values]
         return metrics, title, series, values
@@ -88,10 +88,10 @@ class BaseJob(object):
             Task.enqueue(task=self.task, queue_name=queue_name)
             return True
         except Exception as ex:
-            logger.warning("Error enqueuing Task {} to {}: {}".format(self.task, queue_name, ex))
+            logger.warning(f"Error enqueuing Task {self.task} to {queue_name}: {ex}")
         return False
 
-    def abort(self) -> ():
+    def abort(self) -> None:
         """
         Abort currently running job (can be called multiple times)
         """
@@ -168,7 +168,7 @@ class BaseJob(object):
         return str(self.task.data.status_message)
 
     @classmethod
-    def update_status_batch(cls, jobs: Sequence["BaseJob"]) -> ():
+    def update_status_batch(cls, jobs: Sequence["BaseJob"]) -> None:
         """
         Update the status of jobs, in batch_size
 
@@ -467,9 +467,9 @@ class BaseJob(object):
             # noinspection PyProtectedMember
             potential_tasks = Task._query_tasks(
                 status=["completed", "published"],
-                system_tags=["-{}".format(Task.archived_tag)],
+                system_tags=[f"-{Task.archived_tag}"],
                 _all_=dict(
-                    fields=["runtime.{}".format(cls._job_hash_property)],
+                    fields=[f"runtime.{cls._job_hash_property}"],
                     pattern=exact_match_regex(task_hash),
                 ),
                 only_fields=["id"],
@@ -478,7 +478,7 @@ class BaseJob(object):
             # noinspection PyProtectedMember
             potential_tasks = Task._query_tasks(
                 status=["completed", "published"],
-                system_tags=["-{}".format(Task.archived_tag)],
+                system_tags=[f"-{Task.archived_tag}"],
                 _all_=dict(
                     fields=["comment"],
                     pattern=cls._job_hash_description.format(task_hash),
@@ -491,7 +491,7 @@ class BaseJob(object):
         return None
 
     @classmethod
-    def _set_task_cache_hash(cls, task: Task, task_hash: Optional[str] = None) -> ():
+    def _set_task_cache_hash(cls, task: Task, task_hash: Optional[str] = None) -> None:
         """
         Store the task state hash for later querying
         :param task: The Task object that was created
@@ -505,8 +505,12 @@ class BaseJob(object):
             # noinspection PyProtectedMember
             task._set_runtime_properties(runtime_properties={cls._job_hash_property: str(task_hash)})
         else:
-            hash_comment = cls._job_hash_description.format(task_hash) + "\n"
-            task.set_comment(task.comment + "\n" + hash_comment if task.comment else hash_comment)
+            hash_comment = f"{cls._job_hash_description.format(task_hash)}\n"
+            task.set_comment(
+                f"{task.comment}\n{hash_comment}"  # ruff-format-hint
+                if task.comment
+                else hash_comment
+            )
 
 
 class ClearmlJob(BaseJob):
@@ -524,7 +528,7 @@ class ClearmlJob(BaseJob):
         output_uri: Optional[Union[str, bool]] = None,
         enable_local_imports: bool = True,
         **kwargs: Any,
-    ) -> ():
+    ) -> None:
         """
         Create a new Task based on a base_task_id with a different set of parameters
 
@@ -561,8 +565,8 @@ class ClearmlJob(BaseJob):
             task_status = self.task.status
             if task_status != Task.TaskStatusEnum.created:
                 logger.warning(
-                    "Task cloning disabled but requested Task [{}] status={}. "
-                    "Reverting to clone Task".format(base_task_id, task_status)
+                    f"Task cloning disabled but requested Task [{base_task_id}] status={task_status}. "
+                    "Reverting to clone Task"
                 )
                 disable_clone_task = False
                 self.task = None
@@ -584,8 +588,7 @@ class ClearmlJob(BaseJob):
             for k, v in configuration_overrides.items():
                 if not isinstance(v, (str, dict)):
                     raise ValueError(
-                        "Configuration override dictionary value must be wither str or dict, "
-                        "got {} instead".format(type(v))
+                        f"Configuration override dictionary value must be wither str or dict, got {type(v)} instead"
                     )
                 value = v if isinstance(v, str) else json.dumps(v)
                 if k in task_configurations:
@@ -639,9 +642,7 @@ class ClearmlJob(BaseJob):
         # if we have target_project, remove project from kwargs if we have it.
         if target_project and "project" in kwargs:
             logger.info(
-                "target_project={} and project={} passed, using target_project.".format(
-                    target_project, kwargs["project"]
-                )
+                f"target_project={target_project} and project={kwargs['project']} passed, using target_project."
             )
             kwargs.pop("project", None)
 
@@ -736,10 +737,12 @@ class LocalClearmlJob(ClearmlJob):
             if self._enable_local_imports:
                 current_python_path = env.get("PYTHONPATH")
                 env["PYTHONPATH"] = (
-                    "{}:{}".format(current_python_path, sys.path[0]) if current_python_path else sys.path[0]
+                    f"{current_python_path}:{sys.path[0]}"  # ruff-format-hint
+                    if current_python_path
+                    else sys.path[0]
                 )
         except Exception as e:
-            logger.warning("Could not append local path to PYTHONPATH: {}".format(e))
+            logger.warning(f"Could not append local path to PYTHONPATH: {e}")
         self.task.mark_started()
         self._job_process = subprocess.Popen(args=[python, local_filename], cwd=cwd, env=env)
         return True
@@ -807,7 +810,7 @@ class RunningJob(BaseJob):
         self.task = existing_task if isinstance(existing_task, Task) else Task.get_task(task_id=existing_task)
         self.task_started = bool(self.task.status != Task.TaskStatusEnum.created)
 
-    def force_set_is_cached(self, cached: bool) -> ():
+    def force_set_is_cached(self, cached: bool) -> None:
         self._is_cached_task = bool(cached)
 
 
@@ -825,7 +828,7 @@ class TrainsJob(ClearmlJob):
 
 
 # noinspection PyMethodMayBeStatic, PyUnusedLocal
-class _JobStub(object):
+class _JobStub:
     """
     This is a Job Stub, use only for debugging
     """
@@ -837,7 +840,7 @@ class _JobStub(object):
         task_overrides: Optional[Mapping[str, str]] = None,
         tags: Optional[Sequence[str]] = None,
         **kwargs: Any,
-    ) -> ():
+    ) -> None:
         self.task = None
         self.base_task_id = base_task_id
         self.parameter_override = parameter_override
@@ -846,12 +849,12 @@ class _JobStub(object):
         self.iteration = -1
         self.task_started = None
 
-    def launch(self, queue_name: str = None) -> ():
+    def launch(self, queue_name: str = None) -> None:
         self.iteration = 0
         self.task_started = time()
         print("launching", self.parameter_override, "in", queue_name)
 
-    def abort(self) -> ():
+    def abort(self) -> None:
         self.task_started = -1
 
     def elapsed(self) -> float:

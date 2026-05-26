@@ -11,7 +11,6 @@ from time import sleep
 
 import jwt
 import requests
-import six
 from requests.auth import HTTPBasicAuth
 from requests.exceptions import (
     ChunkedEncodingError,
@@ -601,15 +600,15 @@ class Session(TokenManager):
                 # readjust the slice
                 slice = req_data[cur : cur + size]
                 if not slice:
-                    (self._logger or get_logger()).error(
-                        "{}.{} request exceeds limit {} > {} bytes".format(
-                            service, action, len(req_data), self.__max_req_size
-                        )
+                    logger = self._logger or get_logger()
+                    logger.error(
+                        f"{service}.{action} request exceeds limit {len(req_data)} > {self.__max_req_size} bytes",
+                        exc_info=logger.isEnabledFor(logging.DEBUG),
                     )
                     # skip the payload that could not be sent
                     size = req_data[cur:].find("\n") + 1
                     if size == 0:
-                        # error occured on the last package
+                        # error occurred on the last package
                         break
             if slice:
                 res = self.send_request(
@@ -873,10 +872,20 @@ class Session(TokenManager):
 
     @classmethod
     def verify_feature_set(cls, feature_set: str) -> None:
+        extra_msg = {
+            "advanced": "Enterprise license required"
+        }.get(feature_set)
         if isinstance(feature_set, str):
             feature_set = [feature_set]
         if cls.feature_set not in feature_set:
-            raise ValueError("ClearML-server does not support requested feature set '{}'".format(feature_set))
+            # make sure the feature set is fetched from a session
+            if not cls._get_all_active_sessions():
+                Session()  # create a temporary session such that feature_set is populated
+            if cls.feature_set not in feature_set:
+                raise ValueError("ClearML-server does not support requested feature set '{}'{}".format(
+                    feature_set,
+                    f" ({extra_msg})" if extra_msg else ""
+                ))
 
     @staticmethod
     def _version_tuple(v: str) -> Tuple[int]:
@@ -944,8 +953,8 @@ class Session(TokenManager):
             self.__auth_token = None
 
             return resp["data"]["token"]
-        except LoginError:
-            six.reraise(*sys.exc_info())
+        except LoginError as ex:
+            raise ex
         except KeyError as ex:
             # check if this is a misconfigured api server (getting 200 without the data section)
             if res and res.status_code == 200:
@@ -1022,7 +1031,7 @@ class Session(TokenManager):
             return self.logger
 
 
-def browser_login(clearml_server: Optional[str] = None) -> ():
+def browser_login(clearml_server: Optional[str] = None) -> None:
     """
     Alternative authentication / login method, (instead of configuring ~/clearml.conf or Environment variables)
     ** Only applicable when running inside a browser session,

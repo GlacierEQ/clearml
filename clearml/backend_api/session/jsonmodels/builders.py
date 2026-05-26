@@ -5,13 +5,11 @@ from __future__ import absolute_import
 from collections import defaultdict
 from typing import Any
 
-import six
-
 from . import errors
 from .fields import NotSet
 
 
-class Builder(object):
+class Builder:
     def __init__(
         self,
         parent: "Builder" = None,
@@ -136,7 +134,7 @@ class PrimitiveBuilder(Builder):
 
     def build(self) -> dict:
         schema = {}
-        if issubclass(self.type, six.string_types):
+        if issubclass(self.type, str):
             obj_type = "string"
         elif issubclass(self.type, bool):
             obj_type = "boolean"

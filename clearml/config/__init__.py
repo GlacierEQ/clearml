@@ -18,7 +18,7 @@ from ..backend_config.bucket_config import S3BucketConfigurations
 from ..utilities.proxy_object import LazyEvalWrapper
 
 
-class ConfigWrapper(object):
+class ConfigWrapper:
     _config = None
 
     @classmethod
@@ -47,7 +47,7 @@ class ConfigWrapper(object):
             cls._config = value
 
 
-class ConfigSDKWrapper(object):
+class ConfigSDKWrapper:
     _config_sdk = None
 
     @classmethod
@@ -247,7 +247,6 @@ def get_node_id(default: int = 0) -> int:
 
 
 def get_is_master_node() -> bool:
-    global __force_master_node
     if __force_master_node:
         return True
 

@@ -3,12 +3,11 @@ from functools import wraps
 from typing import Callable, List, Type, Union, Any
 
 import attr
-import six
 
 
-class DeferredExecutionPool(object):
+class DeferredExecutionPool:
     @attr.s
-    class _DeferredAction(object):
+    class _DeferredAction:
         method = attr.ib()
         args = attr.ib()
         kwargs = attr.ib()
@@ -49,7 +48,7 @@ class ParameterizedDefaultDict(dict):
         return self[key]
 
 
-class DeferredExecution(object):
+class DeferredExecution:
     def __init__(self, pool_cls: type = DeferredExecutionPool) -> None:
         self._pools = ParameterizedDefaultDict(pool_cls)
 
@@ -90,7 +89,7 @@ class DeferredExecution(object):
     ) -> Any:
         if callable(condition_or_attr_name):
             return condition_or_attr_name(instance)
-        elif isinstance(condition_or_attr_name, six.string_types):
+        elif isinstance(condition_or_attr_name, str):
             return getattr(instance, condition_or_attr_name)
         return condition_or_attr_name
 

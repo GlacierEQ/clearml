@@ -9,7 +9,7 @@ from typing import Union, Optional, Tuple, Dict
 from pathlib2 import Path
 
 from .helper import StorageHelper
-from .util import quote_url
+from .url import quote_url
 from ..config import get_cache_dir, deferred_config
 from ..debugging.log import LoggerRoot
 from ..utilities.files import get_filename_max_length
@@ -17,7 +17,7 @@ from ..utilities.locks.exceptions import LockException
 from ..utilities.locks.utils import Lock as FileLock
 
 
-class CacheManager(object):
+class CacheManager:
     __cache_managers = {}
     _default_cache_file_limit = deferred_config("storage.cache.default_cache_manager_size", 100)
     _storage_manager_folder = "storage_manager"
@@ -29,7 +29,7 @@ class CacheManager(object):
     _lockfile_prefix = ".lock."
     _lockfile_suffix = ".clearml"
 
-    class CacheContext(object):
+    class CacheContext:
         _folder_locks: Dict[str, FileLock] = dict()
         _lockfile_at_exit_cb = None
 
@@ -51,17 +51,18 @@ class CacheManager(object):
         ) -> Optional[str]:
             helper = StorageHelper.get(remote_url)
 
+            if not helper:
+                raise ValueError(f"Storage access failed: {remote_url}")
+
             if helper.base_url == "file://":
                 remote_url = os.path.expanduser(remote_url)
 
-            if not helper:
-                raise ValueError("Storage access failed: {}".format(remote_url))
             # check if we need to cache the file
             try:
                 # noinspection PyProtectedMember
                 direct_access = helper.get_driver_direct_access(remote_url)
             except (OSError, ValueError):
-                LoggerRoot.get_base_logger().debug("Failed accessing local file: {}".format(remote_url))
+                LoggerRoot.get_base_logger().debug(f"Failed accessing local file: {remote_url}")
                 return None
 
             if direct_access:
@@ -108,7 +109,7 @@ class CacheManager(object):
         def get_hashed_url_file(cls, url: str) -> str:
             str_hash = hashlib.md5(url.encode()).hexdigest()
             filename = url.split("/")[-1]
-            return "{}.{}".format(str_hash, quote_url(filename))
+            return f"{str_hash}.{quote_url(filename)}"
 
         def _conform_filename(self, file_name: str) -> str:
             """
@@ -148,7 +149,7 @@ class CacheManager(object):
             new_file_name = file_basename + file_ext
 
             LoggerRoot.get_base_logger().warning(
-                'Renaming file to "{}" due to filename length limit'.format(new_file_name)
+                f'Renaming file to "{new_file_name}" due to filename length limit'
             )
 
             return new_file_name
@@ -275,7 +276,7 @@ class CacheManager(object):
                         shutil.rmtree(f.as_posix(), ignore_errors=False)
                     except Exception as e:
                         # failed deleting folder
-                        LoggerRoot.get_base_logger().debug("Exception {}\nFailed deleting folder {}".format(e, f))
+                        LoggerRoot.get_base_logger().debug(f"Exception {e}\nFailed deleting folder {f}")
 
             # cleanup old lock files
             for lock_files in lock_files.values():
@@ -287,7 +288,7 @@ class CacheManager(object):
                         pass
             return True
 
-        def lock_cache_folder(self, local_path: Union[str, Path]) -> ():
+        def lock_cache_folder(self, local_path: Union[str, Path]) -> None:
             """
             Lock a specific cache folder, making sure it will not be deleted in the next
             cache cleanup round
@@ -303,11 +304,9 @@ class CacheManager(object):
             i = 0
             # try to create a lock if we do not already have one (if we do, we assume it is locked)
             while not lock:
-                lock_path = local_path.parent / "{}{:03d}.{}{}".format(
-                    CacheManager._lockfile_prefix,
-                    i,
-                    local_path.name,
-                    CacheManager._lockfile_suffix,
+                lock_path = (
+                    local_path.parent
+                    / f"{CacheManager._lockfile_prefix}{i:03d}.{local_path.name}{CacheManager._lockfile_suffix}"
                 )
                 lock = FileLock(filename=lock_path)
 
@@ -325,7 +324,7 @@ class CacheManager(object):
             self._folder_locks[local_path.as_posix()] = lock
             self._rlock.release()
 
-        def unlock_cache_folder(self, local_path: Union[str, Path]) -> ():
+        def unlock_cache_folder(self, local_path: Union[str, Path]) -> None:
             """
             Lock a specific cache folder, making sure it will not be deleted in the next
             cache cleanup round
@@ -378,7 +377,7 @@ class CacheManager(object):
         return CacheManager._local_to_remote_url_lookup.get(hash(conform_local_copy_path), local_copy_path)
 
     @staticmethod
-    def _add_remote_url(remote_url: str, local_copy_path: str) -> ():
+    def _add_remote_url(remote_url: str, local_copy_path: str) -> None:
         # so that we can disable the cache lookup altogether
         if CacheManager._local_to_remote_url_lookup is None:
             return

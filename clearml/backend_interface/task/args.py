@@ -5,7 +5,6 @@ import yaml
 from enum import Enum
 from inspect import isfunction
 
-from six import PY2
 from argparse import (
     _StoreAction,  # noqa
     ArgumentError,  # noqa
@@ -23,7 +22,7 @@ from ...binding.args import call_original_argparser
 from ...utilities.proxy_object import get_type_from_basic_type_str
 
 
-class _Arguments(object):
+class _Arguments:
     _prefix_sep = "/"
     # TODO: separate dict and argparse after we add UI support
     _prefix_args = "Args" + _prefix_sep
@@ -136,7 +135,7 @@ class _Arguments(object):
             defaults_ = {a.dest: cls.__cast_arg(args_dict.get(a.dest), a.type) for a in actions}
         except Exception:
             # don't crash us if we failed parsing the inputs
-            defaults_ = {a.dest: a.default if a.default is not None else "" for a in actions}
+            defaults_ = {a.dest: a.default if a.default not in (None, SUPPRESS) else "" for a in actions}
 
         desc_ = {
             a.dest: str(a.help)
@@ -513,9 +512,6 @@ class _Arguments(object):
                         ):
                             current_action.default = v
                         current_action.required = False
-                        # python2 doesn't support defaults for positional arguments, unless used with nargs=?
-                        if PY2 and not current_action.nargs:
-                            current_action.nargs = "?"
                     else:
                         # do not add parameters that do not exist in argparser, they might be the dict
                         pass

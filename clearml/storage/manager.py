@@ -1,30 +1,34 @@
 import fnmatch
+import logging
 import shutil
-import tarfile
 from multiprocessing.pool import ThreadPool
 from random import random
 from time import time
 from typing import List, Optional, Union
-from zipfile import ZipFile
+from six.moves.urllib.parse import quote
 
 from pathlib2 import Path
 
 from .cache import CacheManager
 from .callbacks import ProgressReport
-from .helper import StorageHelper
-from .util import encode_string_to_filename, safe_extract, create_zip_directories
+from .helper import StorageHelper, StorageHelperDiskSpaceFileSizeStrategy
+from .archive import extract_tar_archive, extract_zip_archive
 from ..config import deferred_config
 from ..debugging.log import LoggerRoot
 
 
-class StorageManager(object):
+class StorageManager:
     """
-    StorageManager is helper interface for downloading & uploading files to supported remote storage
-    Support remote servers: http(s)/S3/GS/Azure/File-System-Folder
-    Cache is enabled by default for all downloaded remote urls/files
+    StorageManager provides an interface for uploading and downloading files to and from remote storage.
+    Supported remote servers: ``http(s)``, ``s3``, ``gs``, ``azure``, and shared filesystem.
+    Caching is enabled by default for all downloaded files.
     """
-
     _file_upload_retries = deferred_config("network.file_upload_retries", 3)
+
+    storage_helper = StorageHelper
+    """
+    :meta private:
+    """
 
     @classmethod
     def get_local_copy(
@@ -34,23 +38,42 @@ class StorageManager(object):
         extract_archive: bool = True,
         name: Optional[str] = None,
         force_download: bool = False,
-    ) -> [str, None]:
+    ) -> Optional[str]:
         """
-        Get a local copy of the remote file. If the remote URL is a direct file access,
-        the returned link is the same, otherwise a link to a local copy of the url file is returned.
-        Caching is enabled by default, cache limited by number of stored files per cache context.
-        Oldest accessed files are deleted when cache is full.
-        One can also use this function to prevent the deletion of a file that has been cached,
-        as the respective file will have its timestamp refreshed
+        Returns a local path to the given remote file.
 
-        :param str remote_url: remote url link (string)
-        :param str cache_context: Optional caching context identifier (string), default context 'global'
-        :param bool extract_archive: if True, returned path will be a cached folder containing the archive's content,
-            currently only zip files are supported.
-        :param str name: name of the target file
-        :param bool force_download: download file from remote even if exists in local cache
-        :return: Full path to local copy of the requested url. Return None on Error.
+        If the remote URL points to a directly accessible local file, it is returned as-is.
+        Otherwise, the file is downloaded and stored in the local cache, and the cached path is returned.
+
+        Each cache context holds up to 100 files by default. When the limit is reached, the least recently accessed
+        files are deleted to make room. Calling this function on an already-cached file refreshes its last-accessed
+        timestamp, preventing its deletion.
+
+        :param remote_url: URL of the remote file to retrieve a local copy of.
+        :param cache_context: Cache context identifier. Defaults to ``'global'``.
+        :param extract_archive: If ``True``, and the file is a supported archive (currently zip files only), return the
+            path to the extracted archive contents instead of the archive file itself.
+        :param name: Name of the target file
+        :param force_download: If ``True``, re-download even if a cached copy exists. Defaults to ``False``.
+        :return: Full path to local copy of the requested URL. Return ``None`` on error.
         """
+        if bool(cls.storage_helper.use_disk_space_file_size_strategy):
+            cached_file = cls.storage_helper.get_local_copy(remote_url=remote_url, force_download=force_download)
+            if cached_file:
+                # noinspection PyProtectedMember
+                CacheManager._add_remote_url(remote_url=remote_url, local_copy_path=cached_file)
+
+            if not extract_archive or not cached_file:
+                return cached_file
+
+            cache = CacheManager.get_cache_manager(cache_context=cache_context)
+            cache_path_encoding = Path(cached_file).parent / cache.get_hashed_url_file(remote_url)
+            return cls._extract_to_cache(
+                cached_file,
+                name='cache',
+                cache_context=cache_context,
+                cache_path_encoding=cache_path_encoding.as_posix()
+            )
         cache = CacheManager.get_cache_manager(cache_context=cache_context)
         cached_file = cache.get_local_copy(remote_url=remote_url, force_download=force_download)
         if extract_archive and cached_file:
@@ -73,7 +96,8 @@ class StorageManager(object):
         retries: Optional[int] = None,
     ) -> str:
         """
-        Upload a local file to a remote location. remote url is the final destination of the uploaded file.
+        Upload a local file to a remote location. Supports ``http(s)``, ``s3``, ``gs``, ``azure``, and shared
+        filesystem.
 
         Examples:
 
@@ -83,10 +107,10 @@ class StorageManager(object):
             upload_file('/tmp/artifact.yaml', 's3://a_bucket/artifacts/my_artifact.yaml')
             upload_file('/tmp/artifact.yaml', '/mnt/share/folder/artifacts/my_artifact.yaml')
 
-        :param str local_file: Full path of a local file to be uploaded
-        :param str remote_url: Full path or remote url to upload to (including file name)
-        :param bool wait_for_upload: If False, return immediately and upload in the background. Default True.
-        :param int retries: Number of retries before failing to upload file.
+        :param local_file: Full path of a local file to be uploaded.
+        :param remote_url: Full path or remote URL to upload to (including file name).
+        :param wait_for_upload: If ``False``, upload in the background and return immediately.  Defaults to ``True``.
+        :param retries: Number of retries before failing to upload file.
         :return: Newly uploaded remote URL.
         """
         return CacheManager.get_cache_manager().upload_file(
@@ -99,11 +123,11 @@ class StorageManager(object):
     @classmethod
     def set_cache_file_limit(cls, cache_file_limit: int, cache_context: Optional[str] = None) -> int:
         """
-        Set the cache context file limit. File limit is the maximum number of files the specific cache context holds.
-        Notice, there is no limit on the size of these files, only the total number of cached files.
+        Set the maximum number of files the cache context can hold. Note: the limit applies to file count only, not
+        total storage size.
 
-        :param int cache_file_limit: New maximum number of cached files
-        :param str cache_context: Optional cache context identifier, default global context
+        :param cache_file_limit: Maximum number of cached files.
+        :param cache_context: Optional cache context identifier, default global context.
         :return: The new cache context file limit.
         """
         return CacheManager.get_cache_manager(
@@ -121,16 +145,16 @@ class StorageManager(object):
         force: bool = False,
     ) -> str:
         """
-        Extract cached file to cache folder
-        :param str cached_file: local copy of archive file
-        :param str name: name of the target file
-        :param str cache_context: cache context id
-        :param str target_folder: specify target path to use for archive extraction
-        :param str cache_path_encoding: specify representation of the local path of the cached files,
+        Extract cached file to cache folder.
+        :param cached_file: Local copy of archive file.
+        :param name: Name of the target file.
+        :param cache_context: Cache context ID.
+        :param target_folder: Specify target path to use for archive extraction.
+        :param cache_path_encoding: Specify representation of the local path of the cached files,
             this will always point to local cache folder, even if we have direct access file.
-            Used for extracting the cached archived based on cache_path_encoding
-        :param bool force: Force archive extraction even if target folder exists
-        :return: cached folder containing the extracted archive content
+            Used for extracting the cached archived based on ``cache_path_encoding``.
+        :param force: Force archive extraction even if target folder exists.
+        :return: Cached folder containing the extracted archive content.
         """
         if not cached_file:
             return cached_file
@@ -148,13 +172,16 @@ class StorageManager(object):
 
         cache_folder = Path(cache_path_encoding or cached_file).parent
         archive_suffix = (cache_path_encoding or cached_file).name[: -len(suffix)]
-        name = encode_string_to_filename(name) if name else name
-        if target_folder:
-            target_folder = Path(target_folder)
-        else:
-            target_folder = cache_folder / CacheManager.get_context_folder_lookup(cache_context).format(
-                archive_suffix, name
-            )
+        name = (
+            quote(name, safe=" ")  # Encoding string to filename
+            if name
+            else name
+        )
+        target_folder = (
+            Path(target_folder)
+            if target_folder
+            else cache_folder / CacheManager.get_context_folder_lookup(cache_context).format(archive_suffix, name)
+        )
 
         if target_folder.is_dir() and not force:
             # noinspection PyBroadException
@@ -167,24 +194,24 @@ class StorageManager(object):
         base_logger = LoggerRoot.get_base_logger()
         try:
             # if target folder exists, meaning this is forced ao we extract directly into target folder
-            if target_folder.is_dir():
-                temp_target_folder = target_folder
-            else:
-                temp_target_folder = cache_folder / "{0}_{1}_{2}".format(
-                    target_folder.name, time() * 1000, str(random()).replace(".", "")
-                )
-                temp_target_folder.mkdir(parents=True, exist_ok=True)
+            temp_target_folder = (
+                target_folder
+                if target_folder.is_dir()
+                else cache_folder / f"{target_folder.name}_{time() * 1000}_{str(random()).replace('.', '')}"
+            )
+            temp_target_folder.mkdir(parents=True, exist_ok=True)
 
             if suffix == ".zip":
-                zip_file = ZipFile(cached_file.as_posix())
-                create_zip_directories(zip_file, path=temp_target_folder.as_posix())
-                zip_file.extractall(path=temp_target_folder.as_posix())
-            elif suffix == ".tar.gz":
-                with tarfile.open(cached_file.as_posix()) as file:
-                    safe_extract(file, temp_target_folder.as_posix())
-            elif suffix == ".tgz":
-                with tarfile.open(cached_file.as_posix(), mode="r:gz") as file:
-                    safe_extract(file, temp_target_folder.as_posix())
+                extract_zip_archive(
+                    archive_path=cached_file.as_posix(),
+                    target=temp_target_folder.as_posix(),
+                )
+            elif suffix in (".tar.gz", ".tgz"):
+                extract_tar_archive(
+                    archive_path=cached_file.as_posix(),
+                    target=temp_target_folder.as_posix(),
+                    suffix=suffix,
+                )
 
             if temp_target_folder != target_folder:
                 # we assume we will have such folder if we already extract the file
@@ -198,17 +225,17 @@ class StorageManager(object):
                         target_folder.touch(exist_ok=True)
                     else:
                         base_logger.warning(
-                            "Failed renaming {0} to {1}".format(temp_target_folder.as_posix(), target_folder.as_posix())
+                            f"Failed renaming {temp_target_folder.as_posix()} to {target_folder.as_posix()}"
                         )
                     try:
                         shutil.rmtree(temp_target_folder.as_posix())
                     except Exception as ex:
                         base_logger.warning(
-                            "Exception {}\nFailed deleting folder {}".format(ex, temp_target_folder.as_posix())
+                            f"Exception {ex}\nFailed deleting folder {temp_target_folder.as_posix()}"
                         )
         except Exception as ex:
             # failed extracting the file:
-            base_logger.warning("Exception {}\nFailed extracting zip file {}".format(ex, cached_file.as_posix()))
+            base_logger.warning(f"Exception {ex}\nFailed extracting zip file {cached_file.as_posix()}")
             # noinspection PyBroadException
             try:
                 target_folder.rmdir()
@@ -232,35 +259,34 @@ class StorageManager(object):
         retries: Optional[int] = None,
     ) -> Optional[str]:
         """
-        Upload local folder recursively to a remote storage, maintaining the sub folder structure
-        in the remote storage.
+        Upload a local folder recursively to remote storage, preserving the subfolder structure.
 
-        .. note::
+        For example, uploading ``'~/folder/'`` to ``'s3://bucket/'`` using
+        ``StorageManager.upload_folder('~/folder/', 's3://bucket/')`` will copy all contents of the local folder to the
+        bucket. If the local folder contains ``~/folder/sub/file.ext``, it will be saved remotely as
+        ``s3://bucket/sub/file.ext``.
 
-            If we have a local file ``\\~/folder/sub/file.ext`` then
-            ``StorageManager.upload_folder('\\~/folder/', 's3://bucket/')``
-            will create ``s3://bucket/sub/file.ext``
-
-        :param str local_folder: Local folder to recursively upload
-        :param str remote_url: Target remote storage location, tree structure of `local_folder` will
-            be created under the target remote_url. Supports Http/S3/GS/Azure and shared filesystem.
-            Example: 's3://bucket/data/'
-        :param str match_wildcard: If specified only upload files matching the `match_wildcard`
-            Example: `*.json`
-            Notice: target file size/date are not checked. Default True, always upload.
-            Notice if uploading to http, we will always overwrite the target.
-        :param int retries: Number of retries before failing to upload a file in the folder.
-        :return: Newly uploaded remote URL or None on error.
+        :param local_folder: Local folder to recursively upload
+        :param remote_url: Target remote storage location. The folder structure of ``local_folder`` will
+            be recreated under ``remote_url``. Supports ``http(s)``, ``s3``, ``gs``, ``azure``, and shared filesystem.
+            Example: ``'s3://bucket/data/'``.
+        :param match_wildcard: If specified, only upload files matching this wildcard pattern.
+            Example: ``*.json``.
+        :param retries: Number of retries before failing to upload a file in the folder.
+        :return: Newly uploaded remote URL or ``None`` on error.
         """
 
         base_logger = LoggerRoot.get_base_logger()
 
         if not Path(local_folder).is_dir():
-            base_logger.error("Local folder '{}' does not exist".format(local_folder))
+            base_logger.error(
+                f"Local folder '{local_folder}' does not exist",
+                exc_info=base_logger.isEnabledFor(logging.DEBUG),
+            )
             return
         local_folder = str(Path(local_folder))
         results = []
-        helper = StorageHelper.get(remote_url)
+        helper = cls.storage_helper.get(remote_url)
         with ThreadPool() as pool:
             for path in Path(local_folder).rglob(match_wildcard or "*"):
                 if not path.is_file():
@@ -286,7 +312,10 @@ class StorageManager(object):
             if failed == 0:
                 return remote_url
 
-            base_logger.error("Failed uploading {}/{} files from {}".format(failed, success + failed, local_folder))
+            base_logger.error(
+                f"Failed uploading {failed}/{success + failed} files from {local_folder}",
+                exc_info=base_logger.isEnabledFor(logging.DEBUG),
+            )
 
     @classmethod
     def download_file(
@@ -298,24 +327,22 @@ class StorageManager(object):
         silence_errors: bool = False,
     ) -> Optional[str]:
         """
-        Download remote file to the local machine, maintaining the sub folder structure from the
-        remote storage.
+        Download a remote file to a local folder, preserving its subfolder structure.
 
-        .. note::
+        For example, to download ``s3://bucket/sub/file.ext``, calling
+        ``StorageManager.download_file('s3://bucket/sub/file.ext', '~/folder/')`` will save it locally as
+        ``~/folder/sub/file.ext``.
 
-            If we have a remote file `s3://bucket/sub/file.ext` then
-            `StorageManager.download_file('s3://bucket/sub/file.ext', '~/folder/')`
-            will create `~/folder/sub/file.ext`
-        :param str remote_url: Source remote storage location, path of `remote_url` will
-            be created under the target local_folder. Supports S3/GS/Azure and shared filesystem.
-            Example: 's3://bucket/data/'
-        :param bool overwrite: If False, and target files exist do not download.
-            If True, always download the remote files. Default False.
-        :param bool skip_zero_size_check: If True, no error will be raised for files with zero bytes size.
-        :param bool silence_errors: If True, silence errors that might pop up when trying to download
-            files stored remotely. Default False
+        :param remote_url: URL of the remote file to download.  Its path structure will be recreated under the target
+            ``local_folder``. Supports ``s3``, ``gs``, ``azure``, and shared filesystem.
+            Example: ``'s3://bucket/data/'``
+        :param local_folder: Local target folder. If ``None`` (default), uses the cache folder.
+        :param overwrite: If ``True``, download remote files even if they exist locally. Defaults to ``False``.
+        :param skip_zero_size_check: If ``True``, no error will be raised for files with zero bytes size. Defaults to
+            ``False``.
+        :param silence_errors: If ``True``, silence errors encountered during download. Defaults to ``False``.
 
-        :return: Path to downloaded file or None on error
+        :return: Path to downloaded file, or ``None`` on error.
         """
 
         def remove_prefix_from_str(target_str: str, prefix_to_be_removed: str) -> str:
@@ -323,13 +350,13 @@ class StorageManager(object):
                 return target_str[len(prefix_to_be_removed) :]
             return target_str
 
-        longest_configured_url = StorageHelper._resolve_base_url(remote_url)  # noqa
+        longest_configured_url = cls.storage_helper._resolve_base_url(remote_url)  # noqa
         bucket_path = remove_prefix_from_str(remote_url[len(longest_configured_url) :], "/")
 
         if not local_folder:
             local_folder = CacheManager.get_cache_manager().get_cache_folder()
         local_path = str(Path(local_folder).expanduser().absolute() / bucket_path)
-        helper = StorageHelper.get(remote_url)
+        helper = cls.storage_helper.get(remote_url)
 
         return helper.download_to_file(
             remote_url,
@@ -342,37 +369,36 @@ class StorageManager(object):
     @classmethod
     def exists_file(cls, remote_url: str) -> bool:
         """
-        Check if remote file exists. Note that this function will return
-        False for directories.
+        Check if remote file exists. Returns ``False`` for directories.
 
-        :param str remote_url: The url where the file is stored.
-            E.g. 's3://bucket/some_file.txt', 'file://local/file'
+        :param remote_url: The URL where the file is stored.
+             For example: ``'s3://bucket/some_file.txt'``, ``'file://local/file'``
 
-        :return: True is the remote_url stores a file and False otherwise
+        :return: ``True`` if the ``remote_url`` stores a file. ``False`` otherwise.
         """
         # noinspection PyBroadException
         try:
             if remote_url.endswith("/"):
                 return False
-            helper = StorageHelper.get(remote_url)
+            helper = cls.storage_helper.get(remote_url)
             return helper.exists_file(remote_url)
         except Exception:
             return False
 
     @classmethod
-    def get_file_size_bytes(cls, remote_url: str, silence_errors: bool = False) -> [int, None]:
+    def get_file_size_bytes(cls, remote_url: str, silence_errors: bool = False) -> Optional[int]:
         """
         Get size of the remote file in bytes.
 
-        :param str remote_url: The url where the file is stored.
-            E.g. 's3://bucket/some_file.txt', 'file://local/file'
-        :param bool silence_errors: Silence errors that might occur
-            when fetching the size of the file. Default: False
+        :param remote_url: The URL where the file is stored.
+            For example: ``'s3://bucket/some_file.txt'``, ``'file://local/file'``
+        :param silence_errors: If ``True``, silence errors encountered while fetching the size of the file.
+            Default: ``False``
 
         :return: The size of the file in bytes.
-            None if the file could not be found or an error occurred.
+            ``None`` if the file could not be found or an error occurred.
         """
-        helper = StorageHelper.get(remote_url)
+        helper = cls.storage_helper.get(remote_url)
         return helper.get_object_size_bytes(remote_url, silence_errors)
 
     @classmethod
@@ -387,32 +413,26 @@ class StorageManager(object):
         max_workers: Optional[int] = None,
     ) -> Optional[str]:
         """
-        Download remote folder recursively to the local machine, maintaining the sub folder structure
-        from the remote storage.
+        Download a remote folder recursively to the local machine, preserving the subfolder structure.
 
-        .. note::
+        For example, downloading ``'s3://bucket/'`` to ``'~/folder/'`` using
+        ``StorageManager.download_folder('s3://bucket/', '~/folder/')`` will copy all contents of the bucket into
+        ``~/folder/``. If the remote contains: ``s3://bucket/sub/file.ext``, it will be saved locally as:
+        ``~/folder/sub/file.ext``.
 
-            If we have a remote file `s3://bucket/sub/file.ext` then
-            `StorageManager.download_folder('s3://bucket/', '~/folder/')`
-            will create `~/folder/sub/file.ext`
-
-        :param str remote_url: Source remote storage location, tree structure of `remote_url` will
-            be created under the target local_folder. Supports S3/GS/Azure and shared filesystem.
-            Example: 's3://bucket/data/'
-        :param str local_folder: Local target folder to create the full tree from remote_url.
-            If None, use the cache folder. (Default: use cache folder)
-        :param match_wildcard: If specified only download files matching the `match_wildcard`
-            Example: `*.json`
-        :param bool overwrite: If False, and target files exist do not download.
-            If True, always download the remote files. Default False.
-        :param bool skip_zero_size_check: If True, no error will be raised for files with zero bytes size.
-        :param bool silence_errors: If True, silence errors that might pop up when trying to download
-            files stored remotely. Default False
-        :param int max_workers: If value is set to a number,
-            it will spawn the specified number of worker threads
-            to download the contents of the folder in parallel. Otherwise, if set to None, it will
-            internally use as many threads as there are
-            logical CPU cores in the system (this is default Python behavior). Default None
+        :param str remote_url: Source remote storage location, tree structure of ``remote_url`` will
+            be created under the target ``local_folder``. Supports ``s3``, ``gs``, ``azure``, and shared filesystem.
+            Example: ``'s3://bucket/data/'``
+        :param local_folder: Local target folder to create the full tree from ``remote_url``.
+            If ``None`` (default), use the cache folder.
+        :param match_wildcard: If specified, only download files matching this wildcard pattern.
+            Example: ``*.json``
+        :param overwrite: If ``True``, download remote files even if they exist locally. Defaults to ``False``.
+        :param skip_zero_size_check: If ``True``, no error will be raised for files with zero bytes size. Defaults to
+            ``False``.
+        :param silence_errors: If ``True``, silence errors encountered during download. Defaults to ``False``.
+        :param max_workers: Number of worker threads for parallel downloads. If ``None`` (default), uses the number
+             of logical CPU cores in the system (default Python behavior).
 
         :return: Target local folder
         """
@@ -423,12 +443,15 @@ class StorageManager(object):
             try:
                 Path(local_folder).mkdir(parents=True, exist_ok=True)
             except OSError as ex:
-                base_logger.error("Failed creating local folder '{}': {}".format(local_folder, ex))
+                base_logger.error(
+                    f"Failed creating local folder '{local_folder}': {ex}",
+                    exc_info=base_logger.isEnabledFor(logging.DEBUG),
+                )
                 return
         else:
             local_folder = CacheManager.get_cache_manager().get_cache_folder()
 
-        helper = StorageHelper.get(remote_url)
+        helper = cls.storage_helper.get(remote_url)
         results = []
 
         with ThreadPool(processes=max_workers) as pool:
@@ -436,7 +459,7 @@ class StorageManager(object):
                 remote_path = (
                     str(Path(helper.base_url) / Path(path))
                     if helper.get_driver_direct_access(helper.base_url)
-                    else "{}/{}".format(helper.base_url.rstrip("/"), path.lstrip("/"))
+                    else f"{helper.base_url.rstrip('/')}/{path.lstrip('/')}"
                 )
                 if match_wildcard and not fnmatch.fnmatch(remote_path, match_wildcard):
                     continue
@@ -454,7 +477,7 @@ class StorageManager(object):
             for res in results:
                 res.wait()
         if not results and not silence_errors:
-            LoggerRoot.get_base_logger().warning("Did not download any files matching {}".format(remote_url))
+            LoggerRoot.get_base_logger().warning(f"Did not download any files matching {remote_url}")
         return local_folder
 
     @classmethod
@@ -463,93 +486,106 @@ class StorageManager(object):
         remote_url: str,
         return_full_path: bool = False,
         with_metadata: bool = False,
+        read_hash: bool = False,
     ) -> Optional[List[Union[str, dict]]]:
         """
         Return a list of object names inside the base path or dictionaries containing the corresponding
-        objects' metadata (in case `with_metadata` is True)
+        objects' metadata (in case ``with_metadata`` is ``True``).
 
-        :param str remote_url: The base path.
+        :param remote_url: The base path.
             For Google Storage, Azure and S3 it is the bucket of the path, for local files it is the root directory.
-            For example: AWS S3: `s3://bucket/folder_` will list all the files you have in
-            `s3://bucket-name/folder_*/*`. The same behaviour with Google Storage: `gs://bucket/folder_`,
-            Azure blob storage: `azure://bucket/folder_` and also file system listing: `/mnt/share/folder_`
-        :param bool return_full_path: If True, return a list of full object paths, otherwise return a list of
-            relative object paths (default False).
-        :param with_metadata: Instead of returning just the names of the objects, return a list of dictionaries
-            containing the name and metadata of the remote file. Thus, each dictionary will contain the following
-            keys: `name`, `size`.
-            `return_full_path` will modify the name of each dictionary entry to the full path.
+            For example: AWS S3: ``s3://bucket/folder_`` will list all the files you have in
+            ``s3://bucket-name/folder_*/*``. The same behavior with Google Storage: ``gs://bucket/folder_``,
+            Azure blob storage: ``azure://bucket/folder_`` and also file system listing: ``/mnt/share/folder_``
+        :param return_full_path: If ``True``, return a list of full object paths instead of relative paths.
+            Defaults to
+            ``False``.
+        :param with_metadata: If ``True``, return a list of dicts containing name and size instead of just names.
+            Defaults to ``False``.
+        :param read_hash: If ``True`` and ``with_metadata=True``, include SHA-256 hash in each metadata dict
+            when the object has it stored in its custom metadata.
 
-        :return: The paths of all the objects the storage base path under prefix or the dictionaries containing the objects' metadata, relative to the base path.
-            None in case of list operation is not supported (http and https protocols for example)
+        :return: A list of object paths relative to the base path, or a list of the objects' metadata dicts if
+            ``with_metadata=True``. Returns ``None`` if the list operation is not supported (e.g. HTTP/HTTPS protocols).
         """
-        helper = StorageHelper.get(remote_url)
+        helper = cls.storage_helper.get(remote_url)
         try:
             helper_list_result = helper.list(prefix=remote_url, with_metadata=with_metadata)
         except Exception as ex:
-            LoggerRoot.get_base_logger().warning("Can not list files for '{}' - {}".format(remote_url, ex))
+            LoggerRoot.get_base_logger().warning(f"Can not list files for '{remote_url}' - {ex}")
             return None
 
         prefix = remote_url.rstrip("/") if helper.base_url == "file://" else helper.base_url
         if not with_metadata:
             return (
-                ["{}/{}".format(prefix, name) for name in helper_list_result]
+                [f"{prefix}/{name}" for name in helper_list_result]
                 if return_full_path
                 else helper_list_result
             )
         else:
             if return_full_path:
                 for obj in helper_list_result:
-                    obj["name"] = "{}/{}".format(prefix, obj.get("name"))
+                    obj["name"] = f"{prefix}/{obj.get('name')}"
             return helper_list_result
 
     @classmethod
-    def get_metadata(cls, remote_url: str, return_full_path: bool = False) -> Optional[dict]:
+    def get_metadata(
+        cls,
+        remote_url: str,
+        return_full_path: bool = False,
+        read_hash: bool = False,
+    ) -> Optional[dict]:
         """
         Get the metadata of the remote object.
-        The metadata is a dict containing the following keys: `name`, `size`.
+        The metadata is a dict containing the following keys: ``name``, ``size``.
 
-        :param str remote_url: Source remote storage location, tree structure of `remote_url` will
-            be created under the target local_folder. Supports S3/GS/Azure, shared filesystem and http(s).
-            Example: 's3://bucket/data/'
-        :param return_full_path: True for returning a full path (with the base url)
+        :param remote_url:  URL of the remote object to retrieve metadata for. Supports ``s3``, ``gs``, ``azure``,
+            shared filesystem, and ``http(s)``. Example: ``'s3://bucket/data/file.txt'``
+        :param return_full_path: If ``True``, the ``name`` field in the returned dict will include the full URL
+            including the base. Defaults to ``False``.
+        :param read_hash: If ``True``, include SHA-256 hash in the returned dict when the object
+            has it stored in its custom metadata.
 
-        :return: A dict containing the metadata of the remote object. In case of an error, `None` is returned
+        :return: A dict containing the metadata of the remote object. ``None``  in case of an error.
         """
-        helper = StorageHelper.get(remote_url)
+        helper = cls.storage_helper.get(remote_url)
         obj = helper.get_object(remote_url)
         if not obj:
             return None
-        metadata = helper.get_object_metadata(obj)
+        metadata = helper.get_object_metadata(obj, read_hash=read_hash)
         base_url = helper._resolve_base_url(remote_url)
         if return_full_path and not metadata["name"].startswith(base_url):
             metadata["name"] = base_url + ("/" if not base_url.endswith("/") else "") + metadata["name"]
         return metadata
 
     @classmethod
-    def set_report_upload_chunk_size(cls, chunk_size_mb: int) -> ():
+    def set_report_upload_chunk_size(cls, chunk_size_mb: int) -> None:
         """
         Set the upload progress report chunk size (in MB). The chunk size
         determines how often the progress reports are logged:
-        every time a chunk of data with a size greater than `chunk_size_mb`
+        every time a chunk of data with a size greater than ``chunk_size_mb``
         is uploaded, log the report.
-        This function overwrites the `sdk.storage.log.report_upload_chunk_size_mb`
-        config entry
+        This function overrides the ``sdk.storage.log.report_upload_chunk_size_mb``
+        configuration value.
 
-        :param chunk_size_mb: The chunk size, in megabytes
+        :param chunk_size_mb: The chunk size in megabytes
         """
         ProgressReport.report_upload_chunk_size_mb = int(chunk_size_mb)
 
     @classmethod
-    def set_report_download_chunk_size(cls, chunk_size_mb: int) -> ():
+    def set_report_download_chunk_size(cls, chunk_size_mb: int) -> None:
         """
         Set the download progress report chunk size (in MB). The chunk size
         determines how often the progress reports are logged:
-        every time a chunk of data with a size greater than `chunk_size_mb`
+        every time a chunk of data with a size greater than ``chunk_size_mb``
         is downloaded, log the report.
-        This function overwrites the `sdk.storage.log.report_download_chunk_size_mb`
+        This function overwrites the ``sdk.storage.log.report_download_chunk_size_mb``
         config entry
 
-        :param chunk_size_mb: The chunk size, in megabytes
+        :param chunk_size_mb: The chunk size in megabytes
         """
         ProgressReport.report_download_chunk_size_mb = int(chunk_size_mb)
+
+
+class StorageManagerDiskSpaceFileSizeStrategy(StorageManager):
+    storage_helper = StorageHelperDiskSpaceFileSizeStrategy

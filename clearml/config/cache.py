@@ -1,14 +1,13 @@
 import json
 from os.path import expanduser
 
-import six
 from pathlib2 import Path
 
 from . import running_remotely
 from .defs import SESSION_CACHE_FILE
 
 
-class SessionCache(object):
+class SessionCache:
     """
     Handle SDK session cache.
     TODO: Improve error handling to something like "except (FileNotFoundError, PermissionError, JSONDecodeError)"
@@ -21,8 +20,7 @@ class SessionCache(object):
     def _load_cache(cls) -> dict:
         # noinspection PyBroadException
         try:
-            flag = "rb" if six.PY2 else "rt"
-            with (Path(expanduser(cls.SESSION_CACHE_FOLDER)) / SESSION_CACHE_FILE).open(flag) as fp:
+            with (Path(expanduser(cls.SESSION_CACHE_FOLDER)) / SESSION_CACHE_FILE).open("rt") as fp:
                 return json.load(fp)
         except Exception:
             return {}
@@ -32,8 +30,7 @@ class SessionCache(object):
         # noinspection PyBroadException
         try:
             Path(expanduser(cls.SESSION_CACHE_FOLDER)).mkdir(parents=True, exist_ok=True)
-            flag = "wb" if six.PY2 else "wt"
-            with (Path(expanduser(cls.SESSION_CACHE_FOLDER)) / SESSION_CACHE_FILE).open(flag) as fp:
+            with (Path(expanduser(cls.SESSION_CACHE_FOLDER)) / SESSION_CACHE_FILE).open("wt") as fp:
                 json.dump(cache, fp)
         except Exception:
             pass

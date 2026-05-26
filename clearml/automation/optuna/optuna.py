@@ -20,7 +20,7 @@ except ImportError:
     raise ImportError("OptimizerOptuna requires 'optuna' package, it was not found\n install with: pip install optuna")
 
 
-class OptunaObjective(object):
+class OptunaObjective:
     def __init__(
         self,
         base_task_id: str,
@@ -108,7 +108,7 @@ class OptunaObjective(object):
         if self.optimizer._objective_metric.len == 1:
             objective_metric = objective_metric[0]
             iteration_value = iteration_value[0]
-        print("OptunaObjective result metric={}, iteration {}".format(objective_metric, iteration_value))
+        print(f"OptunaObjective result metric={objective_metric}, iteration {iteration_value}")
         # noinspection PyProtectedMember
         self.optimizer._current_jobs.remove(current_job)
         return objective_metric
@@ -183,7 +183,7 @@ class OptimizerOptuna(SearchStrategy):
         self._study = continue_previous_study if continue_previous_study else None
         self.parameter_override_history = []
 
-    def start(self) -> ():
+    def start(self) -> None:
         """
         Start the Optimizer controller function loop()
         If the calling process is stopped, the controller will stop as well.
@@ -226,7 +226,7 @@ class OptimizerOptuna(SearchStrategy):
             n_jobs=self._num_concurrent_workers,
         )
 
-    def stop(self) -> ():
+    def stop(self) -> None:
         """
         Stop the current running optimization loop,
         Called from a different thread than the :meth:`start`.
@@ -268,7 +268,7 @@ class OptimizerOptuna(SearchStrategy):
                 hp_type = "suggest_categorical"
                 hp_params = dict(choices=p.values)
             else:
-                raise ValueError("HyperParameter type {} not supported yet with OptimizerBOHB".format(type(p)))
+                raise ValueError(f"HyperParameter type {type(p)} not supported yet with OptimizerBOHB")
             cs[p.name] = (hp_type, hp_params)
 
         return cs

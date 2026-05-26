@@ -14,6 +14,7 @@ class HttpRouter:
     Example usage:
 
     .. code-block:: py
+
         def request_callback(request, persistent_state):
             persistent_state["last_request_time"] = time.time()
 
@@ -35,6 +36,7 @@ class HttpRouter:
             endpoint_telemetry={"model": "MyModel"}
         )
         router.deploy(wait=True)
+
     """
 
     _instance = None
@@ -104,12 +106,15 @@ class HttpRouter:
         :param target: The target URL where the intercepted traffic is routed.
         :param request_callback: A function used to process each request before it is forwarded to the target.
             The callback must have the following parameters:
+
             - request - The intercepted FastAPI request
             - persistent_state - A dictionary meant to be used as a caching utility object.
-            Shared with `response_callback` and `error_callback`
+
+            Shared with `response_callback` and `error_callback`.
             The callback can return a FastAPI Request, in which case this request will be forwarded to the target
         :param response_callback: A function used to process each response before it is returned by the proxy.
             The callback must have the following parameters:
+
             - response - The FastAPI response
             - request - The FastAPI request (after being preprocessed by the proxy)
             - persistent_state - A dictionary meant to be used as a caching utility object.
@@ -118,6 +123,7 @@ class HttpRouter:
         :param endpoint_telemetry: If True, enable endpoint telemetry. If False, disable it.
             If a dictionary is passed, enable endpoint telemetry with custom parameters.
             The parameters are:
+
             - endpoint_url - URL to the endpoint, mandatory if no external URL has been requested
             - endpoint_name - name of the endpoint
             - model_name - name of the model served by the endpoint
@@ -132,9 +138,10 @@ class HttpRouter:
             - container_id - Container ID, should be unique
             - input_size - input size of the model
             - input_type - input type expected by the model/endpoint
-            - report_statistics - whether or not to report statistics
+            - report_statistics - whether to report statistics
         :param error_callback: Callback to be called on request error.
             The callback must have the following parameters:
+
             - request - the FastAPI request which caused the error
             - error - an exception which indicates which error occurred
             - persistent_state - A dictionary meant to be used as a caching utility object.
@@ -150,7 +157,7 @@ class HttpRouter:
             error_callback=error_callback,
         )
 
-    def remove_local_route(self, source: str) -> ():
+    def remove_local_route(self, source: str) -> None:
         """
         Remove a local route. If endpoint telemetry is enabled for that route, disable it
 
@@ -183,13 +190,12 @@ class HttpRouter:
             instead of generating it based on the task ID. Useful for creating
             persistent, load balanced routes.
 
-        :return: If wait is False, this method will return None.
-            If no endpoint could be found while waiting, this mehtod returns None.
-            Otherwise, it returns a dictionary containing the following values:
-            - endpoint - raw endpoint. One might need to authenticate in order to use this endpoint
-            - browser_endpoint - endpoint to be used in browser. Authentication will be handled via the browser
-            - port - the port exposed by the application
-            - protocol - the protocol used by the endpo"int
+        :return: If wait is False, this method will return None. If no endpoint could be found while waiting, this method returns None. Otherwise, it returns a dictionary containing the following values:
+
+            - ``endpoint`` - raw endpoint. One might need to authenticate in order to use this endpoint
+            - ``browser_endpoint`` - endpoint to be used in browser. Authentication will be handled via the browser
+            - ``port`` - the port exposed by the application
+            - ``protocol`` - the protocol used by the endpoint
         """
         self._proxy = self._proxy or HttpProxy(**self._proxy_params)
         return self._task.request_external_endpoint(
@@ -213,12 +219,12 @@ class HttpRouter:
         :param wait_timeout_seconds: If this timeout is exceeded while waiting for the endpoint,
             the method will no longer wait
 
-        :return: If no endpoint could be found while waiting, this mehtod returns None.
-            Otherwise, it returns a dictionary containing the following values:
-            - endpoint - raw endpoint. One might need to authenticate in order to use this endpoint
-            - browser_endpoint - endpoint to be used in browser. Authentication will be handled via the browser
-            - port - the port exposed by the application
-            - protocol - the protocol used by the endpoint
+        :return: If no endpoint could be found while waiting, this method returns None. Otherwise, it returns a dictionary containing the following values:
+
+            - ``endpoint`` - raw endpoint. One might need to authenticate in order to use this endpoint
+            - ``browser_endpoint`` - endpoint to be used in browser. Authentication will be handled via the browser
+            - ``port`` - the port exposed by the application
+            - ``protocol`` - the protocol used by the endpoint
         """
         return self._task.wait_for_external_endpoint(
             protocol="http",
@@ -231,9 +237,10 @@ class HttpRouter:
         List all external endpoints assigned
 
         :return: A list of dictionaries. Each dictionary contains the following values:
-            - endpoint - raw endpoint. One might need to authenticate in order to use this endpoint
-            - browser_endpoint - endpoint to be used in browser. Authentication will be handled via the browser
-            - port - the port exposed by the application
-            - protocol - the protocol used by the endpoint
+
+            - ``endpoint`` - raw endpoint. One might need to authenticate in order to use this endpoint
+            - ``browser_endpoint`` - endpoint to be used in browser. Authentication will be handled via the browser
+            - ``port`` - the port exposed by the application
+            - ``protocol`` - the protocol used by the endpoint
         """
         return self._task.list_external_endpoints(protocol="http")

@@ -495,17 +495,15 @@ class Reporter(InterfaceBase, AbstractContextManager, SetupUploadMixin, AsyncMan
         :param nan_as_null: If True, Convert NaN to None (null), otherwise use 'nan'
         :type nan_as_null: bool
         """
-        inf_value = math.inf if six.PY3 else float("inf")
-
         def to_base_type(
             o: Any,
         ) -> Union[None, str, float, int, datetime.date, datetime.datetime]:
             if isinstance(o, float):
                 if o != o:
                     return None if nan_as_null else "nan"
-                elif o == inf_value:
+                elif o == math.inf:
                     return "inf"
-                elif o == -inf_value:
+                elif o == -math.inf:
                     return "-inf"
                 return round(o, ndigits=round_digits) if round_digits is not None else o
             elif isinstance(o, (datetime.date, datetime.datetime)):
@@ -546,7 +544,7 @@ class Reporter(InterfaceBase, AbstractContextManager, SetupUploadMixin, AsyncMan
                         else:
                             d[k] = to_base_type(v)
             plot = json.dumps(plot, default=default)
-        elif not isinstance(plot, six.string_types):
+        elif not isinstance(plot, str):
             raise ValueError("Plot should be a string or a dict")
 
         ev = PlotEvent(
@@ -686,7 +684,7 @@ class Reporter(InterfaceBase, AbstractContextManager, SetupUploadMixin, AsyncMan
             raise ValueError("Upload configuration is required (use setup_upload())")
         if len([x for x in (path, stream) if x is not None]) != 1:
             raise ValueError("Expected only one of [filename, stream]")
-        if isinstance(stream, six.string_types):
+        if isinstance(stream, str):
             stream = six.StringIO(stream)
 
         kwargs = dict(
@@ -722,29 +720,25 @@ class Reporter(InterfaceBase, AbstractContextManager, SetupUploadMixin, AsyncMan
     ) -> None:
         """
         Report an histogram bar plot
-        :param title: Title (AKA metric)
-        :type title: str
-        :param series: Series (AKA variant)
-        :type series: str
-        :param histogram: The histogram data.
-            A row for each dataset(bar in a bar group). A column for each bucket.
+        :param str title: Title (metric)
+        :param str series: Series (variant)
+        :param np.ndarray nd.histogram: The histogram data. A row for each dataset(bar in a bar group).
+            A column for each bucket.
         :type histogram: numpy array
-        :param iter: Iteration number
-        :type iter: int
-        :param labels: The labels for each bar group.
-        :type labels: list of strings.
-        :param xlabels: The labels of the x axis.
-        :type xlabels: List of strings.
+        :param int iter: Iteration number
+        :param List[str] labels: The labels for each bar group.
+        :param List[str] xlabels: The labels of the x axis.
         :param str xtitle: optional x-axis title
         :param str ytitle: optional y-axis title
-        :param comment: comment underneath the title
-        :type comment: str
-        :param mode: multiple histograms mode. valid options are: stack / group / relative. Default is 'group'.
-        :type mode: str
-        :param data_args: optional dictionary for data configuration, passed directly to plotly
-        :type data_args: dict or None
-        :param layout_config: optional dictionary for layout configuration, passed directly to plotly
-        :type layout_config: dict or None
+        :param str comment: comment underneath the title
+        :param mode: Display mode for multiple histograms. The options are:
+
+          - ``group`` (default)
+          - ``stack``
+          - ``relative``
+
+        :param Optional[dict] data_args: optional dictionary for data configuration, passed directly to plotly
+        :param Optional[dict] layout_config: optional dictionary for layout configuration, passed directly to plotly
         """
         assert mode in ("stack", "group", "relative")
 
@@ -826,9 +820,9 @@ class Reporter(InterfaceBase, AbstractContextManager, SetupUploadMixin, AsyncMan
         :type series: An iterable of LineSeriesInfo.
         :param iter: Iteration number
         :type iter: int
-        :param xtitle: x-axis title
+        :param xtitle: The title of the x-axis
         :type xtitle: str
-        :param ytitle: y-axis title
+        :param ytitle: The title of the y-axis
         :type ytitle: str
         :param mode: 'lines' / 'markers' / 'lines+markers'
         :type mode: str

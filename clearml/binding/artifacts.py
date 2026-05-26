@@ -13,7 +13,6 @@ from time import time
 from typing import Dict, Union, Optional, Sequence, Callable, TYPE_CHECKING, Any
 from zipfile import ZipFile, ZIP_DEFLATED
 
-import six
 import yaml
 from PIL import Image
 from pathlib2 import Path
@@ -24,9 +23,12 @@ from ..backend_api import Session
 from ..backend_api.services import tasks
 from ..backend_interface.metrics.events import UploadEvent
 from ..config import deferred_config, config
+from ..config.defs import BLOCK_PICKLED_ARTIFACTS
 from ..debugging.log import LoggerRoot
 from ..storage.helper import remote_driver_schemes
-from ..storage.util import sha256sum, format_size, get_common_path
+from ..storage.filepaths import get_common_path
+from ..storage.size import format_size
+from ..storage.hashing import sha256sum
 from ..utilities.process.mp import SafeEvent, ForkSafeRLock
 from ..utilities.proxy_object import LazyEvalWrapper
 
@@ -49,12 +51,73 @@ if TYPE_CHECKING:
     import pandas
 
 
-class Artifact(object):
+class ArtifactIntegrityError(ValueError):
+    """
+    Raised when the hash of a local file does not match its metadata.
+    """
+
+    pass
+
+
+class BlockedArtifactTypeError(ValueError):
+    """
+    Raised when an artifact is blocked from being downloaded due to its type.
+    """
+
+    def __init__(
+        self,
+        artifact_filepath: str,
+        artifact_type: str,
+        content_type: str,
+        comment: str = "",
+    ):
+        super().__init__(
+            f"The artifact '{artifact_filepath}' of type '{artifact_type}' and content type '{content_type}' "
+            f"cannot be downloaded. "
+            f"{comment}"
+        )
+
+
+class BlockedPickledArtifactError(BlockedArtifactTypeError):
+    """
+    Raised when a pickled artifact is blocked from being downloaded via configuration.
+    """
+
+    def __init__(
+        self,
+        artifact_filepath: str,
+        artifact_type: str,
+        content_type: str,
+        blocked_by_get_argument: bool,
+    ):
+        super().__init__(
+            artifact_filepath=artifact_filepath,
+            artifact_type=artifact_type,
+            content_type=content_type,
+            comment=(
+                "Use 'Artifact.get' with the argument 'block_pickled_artifacts=False' to download this artifact."
+                if blocked_by_get_argument
+                else (
+                    "To allow download, set 'sdk.storage.block_pickled_artifacts' configuration option to 'False'"
+                    f" or use the environment variable '{BLOCK_PICKLED_ARTIFACTS.key}=False'"
+                )
+            )
+        )
+
+
+class Artifact:
     """
     Read-Only Artifact object
     """
 
     _not_set = object()
+    _block_pickled_artifacts: bool = (
+        BLOCK_PICKLED_ARTIFACTS.get()
+        or deferred_config(
+            "storage.block_pickled_artifacts",
+            False,
+        )
+    )
 
     @property
     def url(self) -> str:
@@ -142,6 +205,7 @@ class Artifact(object):
         self,
         force_download: bool = False,
         deserialization_function: Optional[Callable[[bytes], Any]] = None,
+        block_unsafe_artifacts: bool = False,
     ) -> Any:
         """
         Return an object constructed from the artifact file
@@ -152,22 +216,34 @@ class Artifact(object):
             - pandas.DataFrame - ``.csv.gz``, ``.parquet``, ``.feather``, ``.pickle``
             - numpy.ndarray - ``.npz``, ``.csv.gz``
             - PIL.Image - whatever content types PIL supports
-        All other types will return a pathlib2.Path object pointing to a local copy of the artifacts file (or directory).
-        In case the content of a supported type could not be parsed, a pathlib2.Path object
+        All other types will return a pathlib2.Path object pointing to a local copy of the artifacts file
+        (or directory). In case the content of a supported type could not be parsed, a pathlib2.Path object
         pointing to a local copy of the artifacts file (or directory) will be returned
 
         :param bool force_download: download file from remote even if exists in local cache
-        :param Callable[bytes, object] deserialization_function: A deserialization function that takes one parameter of type `bytes`,
-            which represents the serialized object. This function should return the deserialized object.
+        :param Callable[bytes, object] deserialization_function: A deserialization function that takes one parameter
+            of type `bytes`, which represents the serialized object.
+            This function should return the deserialized object.
             Useful when the artifact was uploaded using a custom serialization function when calling the
             `Task.upload_artifact` method with the `serialization_function` argument.
-        :return: Usually, one of the following objects: Numpy.array, pandas.DataFrame, PIL.Image, dict (json), or pathlib2.Path.
-            An object with an arbitrary type may also be returned if it was serialized (using pickle or a custom serialization function).
+        :param bool block_unsafe_artifacts: When set to True, triggers a raised BlockedArtifactTypeError
+            if an unsafe file format is attempted to be downloaded. Ignored if set to False (default).
+        :return: Usually, one of the following objects:
+
+          - Numpy.array
+          - pandas.DataFrame
+          - PIL.Image
+          - dict (json)
+          - pathlib2.Path.
+
+            An object with an arbitrary type may also be returned if it was serialized
+            (using pickle or a custom serialization function).
         """
         if self._object is not self._not_set:
             return self._object
 
         local_file = self.get_local_copy(raise_on_error=True, force_download=force_download)
+        pickled_artifacts_are_blocked = block_unsafe_artifacts or self._block_pickled_artifacts
 
         # noinspection PyBroadException
         try:
@@ -178,6 +254,15 @@ class Artifact(object):
                 if self._content_type == "text/csv":
                     self._object = np.genfromtxt(local_file, delimiter=",")
                 else:
+                    if pickled_artifacts_are_blocked:
+                        raise BlockedPickledArtifactError(
+                            artifact_filepath=local_file,
+                            artifact_type=self.type,
+                            content_type=self._content_type,
+                            blocked_by_get_argument=block_unsafe_artifacts,
+                        )
+                    self.verify_pickle_file_integrity(local_file=local_file)
+
                     self._object = np.load(local_file)[self.name]
             elif self.type == Artifacts._pd_artifact_type or self.type == "pandas" and pd:
                 if self._content_type == "application/parquet":
@@ -185,6 +270,15 @@ class Artifact(object):
                 elif self._content_type == "application/feather":
                     self._object = pd.read_feather(local_file)
                 elif self._content_type == "application/pickle":
+                    if pickled_artifacts_are_blocked:
+                        raise BlockedPickledArtifactError(
+                            artifact_filepath=local_file,
+                            artifact_type=self.type,
+                            content_type=self._content_type,
+                            blocked_by_get_argument=block_unsafe_artifacts,
+                        )
+
+                    self.verify_pickle_file_integrity(local_file=local_file)
                     self._object = pd.read_pickle(local_file)
                 elif self.type == Artifacts._pd_artifact_type:
                     self._object = pd.read_csv(local_file)
@@ -202,17 +296,21 @@ class Artifact(object):
                 with open(local_file, "rt") as f:
                     self._object = f.read()
             elif self.type == "pickle":
-                if self.hash:
-                    file_hash, _ = sha256sum(local_file, block_size=Artifacts._hash_block_size)
-                    if self.hash != file_hash:
-                        raise Exception("incorrect pickle file hash, artifact file might be corrupted")
+                if pickled_artifacts_are_blocked:
+                    raise BlockedPickledArtifactError(
+                        artifact_filepath=local_file,
+                        artifact_type=self.type,
+                        content_type=self._content_type,
+                        blocked_by_get_argument=block_unsafe_artifacts,
+                    )
+
+                self.verify_pickle_file_integrity(local_file=local_file)
                 with open(local_file, "rb") as f:
                     self._object = pickle.load(f)
         except Exception as e:
             LoggerRoot.get_base_logger().warning(
-                "Exception '{}' encountered when getting artifact with type {} and content type {}".format(
-                    e, self.type, self._content_type
-                )
+                f'Encountered {type(e).__name__}("{e}") when getting artifact '
+                f"with type {self.type} and content type {self._content_type}"
             )
 
         if self._object is self._not_set:
@@ -251,6 +349,24 @@ class Artifact(object):
 
         return local_copy
 
+    def verify_pickle_file_integrity(self, local_file: str) -> None:
+        """
+        Verifies the integrity of the local file by comparing its hash against the hash of the artifact.
+
+        :param str local_file: The path to the local copy of the artifact file
+            to be verified.
+        :raise ValueError: Raised if the calculated hash of the local file
+            does not match the expected hash stored in the artifact metadata,
+            indicating a corrupted or tampered file.
+        """
+        if self.hash:
+            file_hash, _ = sha256sum(
+                local_file,
+                block_size=Artifacts._hash_block_size,
+            )
+            if self.hash != file_hash:
+                raise ArtifactIntegrityError("Incorrect pickle file hash. The artifact file might be corrupted.")
+
     def __repr__(self) -> str:
         return str(
             {
@@ -267,7 +383,7 @@ class Artifact(object):
         )
 
 
-class Artifacts(object):
+class Artifacts:
     max_preview_size_bytes = 65536
 
     _flush_frequency_sec = 300.0
@@ -357,7 +473,7 @@ class Artifacts(object):
         artifact: DataFrame,
         metadata: Optional[dict] = None,
         uniqueness_columns: Union[bool, Sequence[str]] = True,
-    ) -> ():
+    ) -> None:
         """
         :param str name: name of the artifacts. Notice! it will override previous artifacts if name already exists.
         :param pandas.DataFrame artifact: artifact object, supported artifacts object types: pandas.DataFrame
@@ -376,7 +492,7 @@ class Artifacts(object):
         if metadata:
             self._artifacts_container.add_metadata(name, metadata)
 
-    def unregister_artifact(self, name: str) -> ():
+    def unregister_artifact(self, name: str) -> None:
         # Remove artifact from the watch list
         self._unregister_request.add(name)
         self.flush()
@@ -426,8 +542,8 @@ class Artifacts(object):
         local_filename = None
 
         # try to convert string Path object (it might reference a file/folder)
-        # dont not try to serialize long texts.
-        if isinstance(artifact_object, six.string_types) and artifact_object and len(artifact_object) < 2048:
+        # don't try to serialize long texts.
+        if isinstance(artifact_object, str) and artifact_object and len(artifact_object) < 2048:
             # noinspection PyBroadException
             try:
                 artifact_path = Path(artifact_object)
@@ -461,12 +577,8 @@ class Artifacts(object):
             if extension_name_ in valid_extensions:
                 return extension_name_
             LoggerRoot.get_base_logger().warning(
-                "{} artifact can not be uploaded with extension {}. Valid extensions are: {}. Defaulting to {}.".format(
-                    artifact_type_,
-                    extension_name_,
-                    ", ".join(valid_extensions),
-                    default_extension,
-                )
+                f"{artifact_type_} artifact can not be uploaded with extension {extension_name_}. "
+                f"Valid extensions are: {', '.join(valid_extensions)}. Defaulting to {default_extension}."
             )
             return default_extension
 
@@ -678,10 +790,7 @@ class Artifacts(object):
                         for filename in sorted(files):
                             if filename.is_file():
                                 relative_file_name = filename.relative_to(folder).as_posix()
-                                archive_preview += "{} - {}\n".format(
-                                    relative_file_name,
-                                    format_size(filename.stat().st_size),
-                                )
+                                archive_preview += f"{relative_file_name} - {format_size(filename.stat().st_size)}\n"
                                 zf.write(filename.as_posix(), arcname=relative_file_name)
                 except Exception as e:
                     # failed uploading folder:
@@ -701,8 +810,9 @@ class Artifacts(object):
                     raise ValueError("Artifact file '{}' could not be found".format(artifact_object.as_posix()))
 
                 override_filename_in_uri = artifact_object.parts[-1]
-                artifact_type_data.preview = preview or "{} - {}\n".format(
-                    artifact_object.name, format_size(artifact_object.stat().st_size)
+                artifact_type_data.preview = (
+                    preview
+                    or f"{artifact_object.name} - {format_size(artifact_object.stat().st_size)}\n"
                 )
                 artifact_object = artifact_object.as_posix()
                 artifact_type = "custom"
@@ -731,9 +841,7 @@ class Artifacts(object):
                                 if common_path
                                 else filename.as_posix()
                             )
-                            archive_preview += "{} - {}\n".format(
-                                relative_file_name, format_size(filename.stat().st_size)
-                            )
+                            archive_preview += f"{relative_file_name} - {format_size(filename.stat().st_size)}\n"
                             zf.write(filename.as_posix(), arcname=relative_file_name)
                         else:
                             LoggerRoot.get_base_logger().warning(
@@ -753,7 +861,7 @@ class Artifacts(object):
             local_filename = artifact_object
             delete_after_upload = True
         elif (
-            isinstance(artifact_object, six.string_types)
+            isinstance(artifact_object, str)
             and len(artifact_object) < 4096
             and urlparse(artifact_object).scheme in remote_driver_schemes
         ):
@@ -764,7 +872,7 @@ class Artifacts(object):
             artifact_type_data.content_type = mimetypes.guess_type(artifact_object)[0]
             if preview:
                 artifact_type_data.preview = preview
-        elif isinstance(artifact_object, six.string_types) and artifact_object:
+        elif isinstance(artifact_object, str) and artifact_object:
             # if we got here, we should store it as text file.
             artifact_type = "string"
             artifact_type_data.content_type = "text/plain"
@@ -885,13 +993,13 @@ class Artifacts(object):
 
         return True
 
-    def flush(self) -> ():
+    def flush(self) -> None:
         # start the thread if it hasn't already:
         self._start()
         # flush the current state of all artifacts
         self._flush_event.set()
 
-    def stop(self, wait: bool = True) -> ():
+    def stop(self, wait: bool = True) -> None:
         # stop the daemon thread and quit
         # wait until thread exists
         self._exit_flag = True
@@ -907,7 +1015,7 @@ class Artifacts(object):
                 except Exception:
                     pass
 
-    def _start(self) -> ():
+    def _start(self) -> None:
         """Start daemon thread if any artifacts are registered and thread is not up yet"""
         if not self._thread and self._artifacts_container:
             # start the daemon thread
@@ -916,7 +1024,7 @@ class Artifacts(object):
             self._thread.daemon = True
             self._thread.start()
 
-    def _daemon(self) -> ():
+    def _daemon(self) -> None:
         while not self._exit_flag:
             self._flush_event.wait(self._flush_frequency_sec)
             self._flush_event.clear()
@@ -939,7 +1047,7 @@ class Artifacts(object):
             # noinspection PyProtectedMember
             self._task._add_artifacts(self._task_artifact_list)
 
-    def _upload_data_audit_artifacts(self, name: str) -> ():
+    def _upload_data_audit_artifacts(self, name: str) -> None:
         logger = self._task.get_logger()
         pd_artifact = self._artifacts_container.get(name)
         pd_metadata = self._artifacts_container.get_metadata(name)

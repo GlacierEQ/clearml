@@ -12,7 +12,6 @@ DEFAULT_CONFIG_FOLDER = "config"
 """ Default config folder to search for when loading relative to a given path """
 
 ENV_CONFIG_PATHS = []
-
 """ Environment-related config paths """
 
 LOCAL_CONFIG_PATHS = [
@@ -36,9 +35,10 @@ Environment-related config path override environment variable. If this is set, n
 """
 
 CONFIG_VERBOSE = EnvEntry("CLEARML_CONFIG_VERBOSE", type=bool)
+"""Control verbose configuration loading"""
 
 
-class Environment(object):
+class Environment:
     """Supported environment names"""
 
     default = "default"

@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import os
 import sys
 import threading
@@ -32,7 +33,7 @@ except ImportError:
     pass
 
 
-class TensorflowBinding(object):
+class TensorflowBinding:
     @classmethod
     def update_current_task(
         cls,
@@ -56,7 +57,7 @@ class TensorflowBinding(object):
             PatchTensorflow2ModelIO.update_current_task(task)
 
 
-class IsTensorboardInit(object):
+class IsTensorboardInit:
     _tensorboard_initialized = False
 
     @classmethod
@@ -78,7 +79,7 @@ class IsTensorboardInit(object):
 
 
 # noinspection PyProtectedMember
-class WeightsGradientHistHelper(object):
+class WeightsGradientHistHelper:
     def __init__(
         self,
         logger: Any,
@@ -271,7 +272,7 @@ class WeightsGradientHistHelper(object):
 
 
 # noinspection PyMethodMayBeStatic,PyProtectedMember,SpellCheckingInspection
-class EventTrainsWriter(object):
+class EventTrainsWriter:
     """
     TF SummaryWriter implementation that converts the tensorboard's summary into
     ClearML events and reports the events (metrics) for an ClearML task (logger).
@@ -500,7 +501,7 @@ class EventTrainsWriter(object):
         step: int,
         img_data_np: Union[None, np.ndarray, str],
         max_keep_images: int = None,
-    ) -> ():
+    ) -> None:
         # only report images every specific interval
         if step % self.image_report_freq != 0:
             return None
@@ -592,7 +593,7 @@ class EventTrainsWriter(object):
         # update scalar cache
         num, value = self._scalar_report_cache.get((title, series), (0, 0))
         # nan outputs is a string, it's probably a NaN
-        if isinstance(scalar_data, six.string_types):
+        if isinstance(scalar_data, str):
             # noinspection PyBroadException
             try:
                 scalar_data = float(scalar_data)
@@ -1008,7 +1009,7 @@ class EventTrainsWriter(object):
 
 
 # noinspection PyCallingNonCallable
-class ProxyEventsWriter(object):
+class ProxyEventsWriter:
     def __init__(self, events: Any) -> None:
         IsTensorboardInit.set_tensorboard_used()
         self._events = events
@@ -1058,7 +1059,7 @@ class ProxyEventsWriter(object):
 
 
 # noinspection PyPep8Naming
-class PatchSummaryToEventTransformer(object):
+class PatchSummaryToEventTransformer:
     _current_task = None
     __original_getattribute = None
     __original_getattributeX = None
@@ -1273,7 +1274,7 @@ class PatchSummaryToEventTransformer(object):
         return get_base(self, attr)
 
 
-class _ModelAdapter(object):
+class _ModelAdapter:
     """Model adapter which extends the save and save_weights methods of a Keras Model instance"""
 
     _model: Any = None
@@ -1302,7 +1303,10 @@ class _ModelAdapter(object):
         try:
             self._output_model.update_weights(weights_filename=filepath, auto_delete_file=True)
         except Exception as ex:
-            self._logger.error(str(ex))
+            self._logger.error(
+                str(ex),
+                exc_info=self._logger.isEnabledFor(logging.DEBUG),
+            )
 
     def save_weights(self, filepath: str, overwrite: bool = True) -> None:
         self._model.save_weights(filepath=filepath, overwrite=overwrite)
@@ -1310,10 +1314,13 @@ class _ModelAdapter(object):
         try:
             self._output_model.update_weights(weights_filename=filepath, auto_delete_file=True)
         except Exception as ex:
-            self._logger.error(str(ex))
+            self._logger.error(
+                str(ex),
+                exc_info=self._logger.isEnabledFor(logging.DEBUG),
+            )
 
 
-class PatchModelCheckPointCallback(object):
+class PatchModelCheckPointCallback:
     _current_task = None
     __original_getattribute = None
     __patched = False
@@ -1420,7 +1427,7 @@ class PatchModelCheckPointCallback(object):
 
 
 # noinspection PyProtectedMember,PyUnresolvedReferences
-class PatchTensorFlowEager(object):
+class PatchTensorFlowEager:
     _current_task = None
     __original_fn_scalar = None
     __original_fn_hist = None
@@ -1825,7 +1832,7 @@ class PatchTensorFlowEager(object):
 
 
 # noinspection PyPep8Naming,SpellCheckingInspection
-class PatchKerasModelIO(object):
+class PatchKerasModelIO:
     _current_task = None
     __patched_keras = None
     __patched_tensorflow = None
@@ -2278,7 +2285,7 @@ class PatchKerasModelIO(object):
         return self._current_task
 
 
-class PatchTensorflowModelIO(object):
+class PatchTensorflowModelIO:
     _current_task = None
     __patched = None
 
@@ -2613,7 +2620,7 @@ class PatchTensorflowModelIO(object):
         return model
 
 
-class PatchTensorflow2ModelIO(object):
+class PatchTensorflow2ModelIO:
     _current_task = None
     __patched = None
 

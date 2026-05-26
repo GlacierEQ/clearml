@@ -3,7 +3,6 @@ from collections import namedtuple
 from functools import partial
 from typing import Optional, Callable, Union, Dict, List, Any
 
-import six
 from pathlib2 import Path
 
 from .base import IdObjectBase
@@ -21,7 +20,7 @@ class ModelDoesNotExistError(Exception):
     pass
 
 
-class _StorageUriMixin(object):
+class _StorageUriMixin:
     @property
     def upload_storage_uri(self) -> str:
         """A URI into which models are uploaded"""
@@ -206,7 +205,7 @@ class Model(IdObjectBase, AsyncManagerMixin, _StorageUriMixin):
         :param design: If it is a dictionary with a 'design' key in it, return
             design['design'].
             If it is a dictionary without 'design' key, return the first value
-            in it's values list.
+            in its values list.
             If it is an empty dictionary, None, or any other False value,
             return an empty string.
             If it is a string, return design as-is.
@@ -216,7 +215,7 @@ class Model(IdObjectBase, AsyncManagerMixin, _StorageUriMixin):
         if not design:
             return ""
 
-        if isinstance(design, six.string_types):
+        if isinstance(design, str):
             return design
 
         if isinstance(design, dict):
@@ -601,7 +600,7 @@ class Model(IdObjectBase, AsyncManagerMixin, _StorageUriMixin):
         # if p.is_file():
         #     return str(p)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(six.text_type(design))
+        p.write_text(str(design))
         return str(p)
 
     def get_model_package(self) -> ModelPackage:

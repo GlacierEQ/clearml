@@ -1,12 +1,9 @@
 """ Timing support """
-import sys
 import time
 from typing import Callable, Optional, Dict, List, Any
 
-import six
 
-
-class Timer(object):
+class Timer:
     """A class implementing a simple timer, with a reset option"""
 
     def __init__(self) -> None:
@@ -66,7 +63,7 @@ class Timer(object):
         return self.toc(average=average)
 
 
-class TimersMixin(object):
+class TimersMixin:
     def __init__(self) -> None:
         self._timers = {}
 
@@ -95,9 +92,9 @@ class TimersMixin(object):
     ) -> Any:
         try:
             return callable(self._timers[name])
-        except KeyError:
+        except KeyError as ex:
             if not silent_fail:
-                six.reraise(*sys.exc_info())
+                raise ex
 
     def reset_timers(self, *names: Any) -> None:
         for name in names:

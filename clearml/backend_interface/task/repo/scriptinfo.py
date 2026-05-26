@@ -1,7 +1,7 @@
 import os
 import sys
 from copy import copy
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from tempfile import gettempdir, mkdtemp
 from types import TracebackType
@@ -33,7 +33,7 @@ class ScriptInfoError(Exception):
     pass
 
 
-class ScriptRequirements(object):
+class ScriptRequirements:
     _detailed_import_report = deferred_config("development.detailed_import_report", False)
     _max_requirements_size = 512 * 1024
     _packages_remove_version = ("setuptools",)
@@ -227,7 +227,8 @@ class ScriptRequirements(object):
             pass
 
         # python version header
-        requirements_txt = "# Python " + sys.version.replace("\n", " ").replace("\r", " ") + "\n"
+        python_version = sys.version.replace('\n', ' ').replace('\r', ' ')
+        requirements_txt = f"# Python {python_version}\n"
 
         if local_pks:
             requirements_txt += "\n# Local modules found - skipping:\n"
@@ -320,7 +321,7 @@ class ScriptRequirements(object):
         return _internal(installed_pkgs)
 
 
-class _JupyterObserver(object):
+class _JupyterObserver:
     _thread = None
     _exit_event = None
     _sync_event = None
@@ -545,7 +546,7 @@ class _JupyterObserver(object):
                                 name="notebook",
                                 artifact_object=Path(local_jupyter_filename),
                                 preview="See `notebook preview` artifact",
-                                metadata={"UPDATE": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")},
+                                metadata={"UPDATE": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")},
                                 wait_on_upload=True,
                             )
                             # noinspection PyBroadException
@@ -560,7 +561,7 @@ class _JupyterObserver(object):
                                     name="notebook preview",
                                     artifact_object=local_html,
                                     preview="Click `FILE PATH` link",
-                                    metadata={"UPDATE": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")},
+                                    metadata={"UPDATE": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")},
                                     delete_after_upload=True,
                                     wait_on_upload=True,
                                 )
@@ -648,7 +649,7 @@ class _JupyterObserver(object):
                 pass
 
 
-class ScriptInfo(object):
+class ScriptInfo:
     _sagemaker_metadata_path = "/opt/ml/metadata/resource-metadata.json"
 
     max_diff_size_bytes = 500000
@@ -1239,7 +1240,7 @@ class ScriptInfo(object):
             diff=diff,
             ide=ide,
             requirements={"pip": requirements, "conda": conda_requirements} if requirements else None,
-            binary="python{}.{}".format(sys.version_info.major, sys.version_info.minor),
+            binary=f"python{sys.version_info.major}.{sys.version_info.minor}",
             repo_root=repo_root,
             jupyter_filepath=jupyter_filepath,
         )
@@ -1493,13 +1494,13 @@ class ScriptInfo(object):
 
 
 @attr.s
-class ScriptInfoResult(object):
+class ScriptInfoResult:
     script = attr.ib(default=None)
     warning_messages = attr.ib(factory=list)
     auxiliary_git_diff = attr.ib(default=None)
 
 
-class _JupyterHistoryLogger(object):
+class _JupyterHistoryLogger:
     _reg_replace_ipython = r"\n([ \t]*)get_ipython\(\)"
     _reg_replace_magic = r"\n([ \t]*)%"
     _reg_replace_bang = r"\n([ \t]*)!"

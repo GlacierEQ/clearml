@@ -3,14 +3,8 @@ from __future__ import absolute_import, division, print_function
 import re
 from copy import deepcopy
 from typing import Callable, Union, List, Optional, Tuple, Any
-
-import six
 from attr import attrs, attrib
-
-if six.PY3:
-    from math import inf
-else:
-    inf = float("inf")
+from math import inf
 
 
 class InvalidVersion(ValueError):
@@ -20,7 +14,7 @@ class InvalidVersion(ValueError):
 
 
 @attrs
-class _Version(object):
+class _Version:
     epoch = attrib()
     release = attrib()
     dev = attrib()
@@ -29,7 +23,7 @@ class _Version(object):
     local = attrib()
 
 
-class _BaseVersion(object):
+class _BaseVersion:
     def __init__(self, key: Any) -> None:
         self._key = key
 

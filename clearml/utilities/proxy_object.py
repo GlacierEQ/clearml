@@ -4,7 +4,6 @@ from copy import copy
 from logging import getLogger
 from typing import Callable, Union, Optional, Mapping, Tuple, Dict, Any
 
-import six
 import yaml
 
 
@@ -115,7 +114,7 @@ class ProxyDictPreWrite(dict):
         )
 
 
-class StubObject(object):
+class StubObject:
     def __call__(self, *args: Any, **kwargs: Any) -> "StubObject":
         return self
 
@@ -135,7 +134,7 @@ def verify_basic_type(
             float,
             int,
             bool,
-            six.string_types,
+            str,
         )
         if not basic_types
         else tuple(b for b in basic_types if b not in (list, tuple, dict))
@@ -221,8 +220,6 @@ def get_type_from_basic_type_str(type_str: str) -> type:
 
 
 def get_basic_type(value: Any) -> str:
-    basic_types = (float, int, bool, six.string_types, list, tuple, dict)
-
     if isinstance(value, (list, tuple)) and value:
         tv = type(value)
         t = type(value[0])
@@ -235,7 +232,7 @@ def get_basic_type(value: Any) -> str:
 
     # it might be an empty list/dict/tuple
     t = type(value)
-    if isinstance(value, basic_types):
+    if isinstance(value, (float, int, bool, str, list, tuple, dict)):
         return str(getattr(t, "__name__", t))
 
     # we are storing it, even though we will not be able to restore it
@@ -244,17 +241,12 @@ def get_basic_type(value: Any) -> str:
 
 def flatten_dictionary(a_dict: dict, prefix: str = "", sep: str = "/") -> dict:
     flat_dict = {}
-    basic_types = (
-        float,
-        int,
-        bool,
-        six.string_types,
-    )
+
     for k, v in a_dict.items():
         k = str(k)
-        if isinstance(v, (float, int, bool, six.string_types)):
+        if isinstance(v, (float, int, bool, str)):
             flat_dict[prefix + k] = v
-        elif isinstance(v, (list, tuple)) and all([isinstance(i, basic_types) for i in v]):
+        elif isinstance(v, (list, tuple)) and all([isinstance(i,  (float, int, bool, str)) for i in v]):
             flat_dict[prefix + k] = v
         elif isinstance(v, dict):
             nested_flat_dict = flatten_dictionary(v, prefix=prefix + k + sep, sep=sep)
@@ -270,18 +262,12 @@ def flatten_dictionary(a_dict: dict, prefix: str = "", sep: str = "/") -> dict:
 
 
 def nested_from_flat_dictionary(a_dict: dict, flat_dict: dict, prefix: str = "", sep: str = "/") -> dict:
-    basic_types = (
-        float,
-        int,
-        bool,
-        six.string_types,
-    )
     org_dict = copy(a_dict)
     for k, v in org_dict.items():
         k = str(k)
-        if isinstance(v, (float, int, bool, six.string_types)):
+        if isinstance(v, (float, int, bool, str)):
             a_dict[k] = flat_dict.get(prefix + k, v)
-        elif isinstance(v, (list, tuple)) and all([isinstance(i, basic_types) for i in v]):
+        elif isinstance(v, (list, tuple)) and all([isinstance(i,  (float, int, bool, str)) for i in v]):
             a_dict[k] = flat_dict.get(prefix + k, v)
         elif isinstance(v, dict):
             a_dict[k] = nested_from_flat_dictionary(v, flat_dict, prefix=prefix + k + sep, sep=sep) or v
@@ -465,7 +451,7 @@ class WrapperBase(type):
         return type.__new__(mcs, classname, bases, attrs)
 
 
-class LazyEvalWrapper(six.with_metaclass(WrapperBase)):
+class LazyEvalWrapper(metaclass=WrapperBase):
     # This class acts as a proxy for the wrapped instance it is passed. All
     # access to its attributes are delegated to the wrapped class, except
     # those contained in __overrides__.
@@ -525,7 +511,7 @@ class LazyEvalWrapper(six.with_metaclass(WrapperBase)):
 
 
 def lazy_eval_wrapper_spec_class(class_type: type) -> type:
-    class TypedLazyEvalWrapper(six.with_metaclass(WrapperBase)):
+    class TypedLazyEvalWrapper(metaclass=WrapperBase):
         _base_class_ = class_type
         __slots__ = ["_wrapped", "_callback", "__weakref__"]
 

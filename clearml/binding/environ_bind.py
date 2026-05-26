@@ -4,15 +4,13 @@ from multiprocessing import pool
 from time import sleep
 from typing import Callable, TYPE_CHECKING, Any
 
-import six
-
 if TYPE_CHECKING:
     from .. import Task
 from ..config import TASK_LOG_ENVIRONMENT, running_remotely, config
 from ..utilities.process.mp import BackgroundMonitor
 
 
-class EnvironmentBind(object):
+class EnvironmentBind:
     _current_task = None
     _environment_section = "Environment"
     __patched = False
@@ -71,7 +69,7 @@ class EnvironmentBind(object):
         cls._current_task.connect(env_param, cls._environment_section)
 
 
-class SimpleQueueWrapper(object):
+class SimpleQueueWrapper:
     def __init__(self, task: Any, simple_queue: Any) -> None:
         self.__current_task = task
         self.__simple_queue = simple_queue
@@ -96,7 +94,7 @@ class SimpleQueueWrapper(object):
         return getattr(self.__simple_queue, attr)
 
 
-class PatchOsFork(object):
+class PatchOsFork:
     _original_fork = None
     _registered_fork_callbacks = False
     _current_task = None
@@ -123,11 +121,7 @@ class PatchOsFork(object):
                 )
                 cls._registered_fork_callbacks = True
             except Exception:
-                # python <3.6
-                if six.PY2:
-                    cls._original_fork = staticmethod(os.fork)
-                else:
-                    cls._original_fork = os.fork
+                cls._original_fork = os.fork
                 os.fork = cls._patched_fork
 
         except Exception:

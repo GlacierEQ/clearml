@@ -1,19 +1,11 @@
 import sys
+import builtins
 import types
 from collections import defaultdict
 from typing import Callable, Any
 
-import six
 
-if six.PY2:
-    # python2.x
-    import __builtin__ as builtins
-else:
-    # python3.x
-    import builtins
-
-
-class PostImportHookPatching(object):
+class PostImportHookPatching:
     _patched = False
     _post_import_hooks = defaultdict(list)
 
@@ -23,14 +15,8 @@ class PostImportHookPatching(object):
             return
         PostImportHookPatching._patched = True
 
-        if six.PY2:
-            # python2.x
-            builtins.__org_import__ = builtins.__import__
-            builtins.__import__ = PostImportHookPatching.__patched_import2
-        else:
-            # python3.x
-            builtins.__org_import__ = builtins.__import__
-            builtins.__import__ = PostImportHookPatching.__patched_import3
+        builtins.__org_import__ = builtins.__import__
+        builtins.__import__ = PostImportHookPatching.__patched_import3
 
     @staticmethod
     def __patched_import2(
